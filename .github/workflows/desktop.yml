@@ -1,14 +1,16 @@
 name: Desktop wizard
 on:
   pull_request:
-    paths: ['nomiarch/**', 'desktop/**', 'tests/test_desktop.py', '.github/workflows/desktop.yml']
+    paths: ['nomiarch/**', 'desktop/**', 'tests/test_desktop.py', 'tests/test_foundation.py', '.github/workflows/desktop.yml']
   push:
     branches: [main]
-    paths: ['nomiarch/desktop/**', 'desktop/**', '.github/workflows/desktop.yml']
+    paths: ['nomiarch/desktop/**', 'nomiarch/foundation/**', 'desktop/**', '.github/workflows/desktop.yml']
 permissions:
   contents: read
 jobs:
   build:
+    outputs:
+      release_ready: ${{ steps.release.outputs.ready }}
     strategy:
       fail-fast: false
       matrix:
@@ -22,7 +24,7 @@ jobs:
           - os: ubuntu-24.04
             name: linux-x64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -34,11 +36,28 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk age
       - name: Install build dependencies
-        run: python -m pip install -r desktop/requirements.txt
+        run: python -m pip install -r desktop/requirements.txt -r desktop/cloud-requirements.txt
       - name: Native controller tests
-        run: python -m unittest discover -s tests -p test_desktop.py -v
+        run: |
+          python -m unittest discover -s tests -p test_desktop.py -v
+          python -m unittest discover -s tests -p test_foundation.py -v
+      - name: Package Microsoft Azure sign-in helper
+        run: python -m PyInstaller --noconfirm --clean --onedir --console --name az --distpath cloud-tools --collect-all azure.cli.core --collect-all azure.cli.command_modules.profile --collect-all azure.cli.command_modules.vm --collect-all azure.cli.command_modules.network --collect-all azure.cli.command_modules.resource --collect-submodules azure.mgmt.compute --collect-submodules azure.mgmt.resource --collect-submodules azure.mgmt.core --collect-submodules azure.mgmt.authorization --collect-all msal --copy-metadata azure-cli --copy-metadata azure-cli-core --copy-metadata azure-cli-telemetry desktop/azure_helper.py
+      - name: Verify packaged Microsoft helper
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = 'Windows' ]; then cloud-tools/az/az.exe version; else cloud-tools/az/az version; fi
+      - id: release
+        name: Read release admission gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from nomiarch.desktop.catalog import RELEASE_READY
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ready='+str(RELEASE_READY).lower()+'\n')
+          PY
       - name: Package native desktop app
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra desktop/launcher.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra --add-data cloud-tools:cloud-tools desktop/launcher.py
       - name: Test packaged Windows screens
         if: runner.os == 'Windows'
         shell: pwsh
@@ -56,7 +75,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: screen-${{ matrix.name }}
-          path: desktop-test.png
+          path: desktop-test*.png
       - name: Assemble downloads
         shell: bash
         env:
@@ -83,12 +102,15 @@ jobs:
           path: downloads/
           retention-days: 14
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.outputs.release_ready == 'true'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
@@ -101,12 +123,18 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           cat > notes.md <<'EOF'
-          Graphical Nomiarch Setup 0.1.0.dev3. Installs the validated Core 0.1.0.dev2.
+          Graphical Nomiarch Setup 0.1.0.dev4 with customer scaffolds, explicit deployment-plan approval and a local/Azure destination choice. Installs the admitted Core 0.1.0.dev3.
 
-          Download the app for your computer and open it. No Python, Git, Docker or OpenSSL installation is needed for the desktop app. Choose Set up this computer or Download an offline kit. File downloads and signatures are checked automatically. VM support setup may request administrator approval and a restart.
+          Download the app for your computer and open it. The official Microsoft Azure CLI sign-in helper is included. Local setup guides VM support installation and verifies offline files. Azure setup requires a customer subscription and an existing privately routed subnet. Azure uses a pinned Terraform/OpenTofu scaffold; local lifecycle uses the explicit Multipass adapter.
+
+          Personal evaluation keeps a local approval record. Organisation GitHub setup requires a private customer repository, designated human reviewers and protected main. Core evaluates observations and proposes bounded repairs through the controller; it has no infrastructure credentials or apply capability. Upgrade, repair and removal have their own approval plans and organisation PRs. Internal/offline organisation repository deployment integration is not included yet. See https://nomiarch.com/docs/running/ for exact preview limits.
 
           Windows preview: Windows 11 Pro/Enterprise/Education on Intel/AMD with Hyper-V. Windows Home and ARM Windows are not supported. Windows, macOS and Linux packages passed native controller and packaged-screen tests. End-to-end VM creation on customer desktops and physical air-gap testing remain unqualified.
 
           These are unsigned evaluation packages; Windows/macOS may warn or block them. No signing/notarization certificate has been provisioned. Do not disable operating-system protections. Use an approved evaluation environment if your organization permits unsigned software.
           EOF
-          gh release create desktop-v0.1.0.dev3 downloads/* --target "$COMMIT" --prerelease --title 'Nomiarch Desktop Setup 0.1.0.dev3' --notes-file notes.md
+          if gh release view desktop-v0.1.0.dev4 >/dev/null 2>&1; then
+            echo 'This immutable preview release already exists; no assets were replaced.'
+            exit 0
+          fi
+          gh release create desktop-v0.1.0.dev4 downloads/* --target "$COMMIT" --prerelease --title 'Nomiarch Desktop Setup 0.1.0.dev4' --notes-file notes.md

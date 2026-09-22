@@ -39,8 +39,28 @@ def smoke(url, token, *, real_model=False):
     if not isinstance(result["explanation"].get("summary"), str) or not result["explanation"]["summary"].strip():
         raise NomiarchError("The explanation service returned no usable text")
     evidence = request(url + "/v1/evidence", token=token)
+    foundation = foundation_probe(url, token) if health.get('version') == '0.1.0.dev3' else None
     return {"health": health, "task": task, "evidence_checkpoint": evidence["checkpoint"],
-            "unauthenticated_request": "denied"}
+            "unauthenticated_request": "denied", "foundation": foundation}
+
+
+def foundation_probe(url, token):
+    desired = {'cpus': 2, 'memory_gib': 8, 'disk_gib': 40, 'outbound_blocked': True}
+    config = {'kind': 'foundation', 'name': 'a'*32, 'configuration_sha256': 'b'*64,
+              'desired': desired, 'observed': dict(desired, outbound_blocked=False)}
+    task_id = request(url + '/v1/tasks', token=token, data={'config': config})['id']
+    until = time.monotonic() + 150
+    while time.monotonic() < until:
+        task = request(url + '/v1/tasks/' + task_id, token=token)
+        if task['status'] in {'failed', 'completed'}: break
+        time.sleep(1)
+    else: raise NomiarchError('Foundation observation task timed out')
+    result = task.get('result') or {}
+    if (task['status'] != 'completed' or result.get('authority') != 'proposal-only'
+            or [f['check'] for f in result.get('findings', []) if f['status'] == 'fail'] != ['outbound_blocked']):
+        raise NomiarchError('Foundation observation evaluation failed')
+    return {'task': task['id'], 'drift': 'detected', 'authority': 'proposal-only',
+            'scope': 'Synthetic observation acceptance test; use the controller observer for live measurements'}
 
 
 def boundary_probe():

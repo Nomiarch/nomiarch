@@ -1,9 +1,15 @@
 # Install and maintain the Nomiarch preview
 
-Version: **0.1.0.dev2**. This is a technical evaluation, with a terminal wizard and an
+For the graphical local/Azure setup, customer repositories and human approvals, use
+[the desktop guide](desktop.md) and [customer foundation guide](foundation.md). The
+website has separate Windows, macOS and Linux opening instructions, including Apple's
+per-app **Open Anyway** step. The rest of this page describes the advanced terminal path.
+
+Version: **0.1.0.dev3**. This is a technical evaluation, with a terminal wizard and an
 API-based core. There is no browser dashboard yet. The included task checks sample
 configuration, explains findings with a local model, and records evidence; it does not
-remediate live infrastructure.
+automatically remediate live infrastructure. Core also evaluates bounded foundation
+observations from the desktop controller; any repair still requires human approval.
 
 ## 1. Choose a machine
 
@@ -20,7 +26,7 @@ transferring the installation kit. Docker and Git are not required for this cust
 
 ## 2. Download your installation kit
 
-Open https://github.com/Nomiarch/nomiarch/releases/tag/v0.1.0.dev2 and download the four
+Open https://github.com/Nomiarch/nomiarch/releases/tag/v0.1.0.dev3 and download the four
 assets for your architecture (replace `amd64` with `arm64` where needed):
 
 - `nomiarch-controller-amd64.zip` — the bootstrap application and offline documentation.

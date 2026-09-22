@@ -34,6 +34,11 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(service.download('https://example.test/file',path,digest(path)),path)
             network.assert_not_called()
 
+    def test_disconnected_vm_support_does_not_download(self):
+        with tempfile.TemporaryDirectory() as d, patch('nomiarch.desktop.service.platform.system', return_value='Windows'), patch('urllib.request.urlopen') as network:
+            with self.assertRaises(NomiarchError): service.install_vm_support(d, lambda *args: None, online=False)
+            network.assert_not_called()
+
     def test_atomic_write_and_cross_process_lock(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'state.json';atomic_write(p,'first');atomic_write(p,'second')

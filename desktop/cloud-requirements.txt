@@ -1,0 +1,3 @@
+# Build a separate native helper so Azure dependencies do not enter the guest.
+azure-cli==2.90.0
+pyinstaller==6.22.3

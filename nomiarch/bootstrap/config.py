@@ -1,4 +1,5 @@
 import ipaddress
+import os
 from pathlib import Path
 import re
 import uuid
@@ -98,4 +99,5 @@ def files_preflight(config):
         for name in ("ssh_key", "ssh_public_key", "known_hosts"):
             if name in details:
                 require(Path(details[name]).is_file(), f"Missing {name} file: {details[name]}")
-        require(Path(details["ssh_key"]).stat().st_mode & 0o077 == 0, "SSH private key permissions must be 0600 or stricter")
+        if os.name != "nt":
+            require(Path(details["ssh_key"]).stat().st_mode & 0o077 == 0, "SSH private key permissions must be 0600 or stricter")

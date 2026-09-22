@@ -27,6 +27,10 @@ jobs:
         run: python3 -m nomiarch dev demo
       - name: Policy enforcement
         run: opa test policies -v
+      - name: Guest egress boundary in isolated network namespaces
+        run: sudo python3 scripts/check_guest_network.py
+      - name: Generated customer Terraform scaffold
+        run: python3 scripts/check_scaffold.py
       - name: Azure HCL formatting and provider schema
         working-directory: infra/azure
         run: |

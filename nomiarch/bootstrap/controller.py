@@ -215,6 +215,8 @@ def dispatch(args):
     validate(run["config"])
     if args.action == "status":
         return {"observation": "last recorded controller state; not a fresh cloud/guest health query", **run}
+    if run.get('foundation') and args.action in {'repair', 'upgrade', 'destroy'}:
+        raise NomiarchError('Customer foundations require an operation-specific approval. Open this installation in the desktop wizard to prepare and approve its repair, upgrade or removal plan.')
     with file_lock(directory / "controller.lock", blocking=False):
         run = read_json(directory / "run.json")
         if args.action == "destroy":
@@ -231,6 +233,9 @@ def dispatch(args):
             core = json.loads(provider.remote(command + ["deployment/core", "--", "python3", "-m", "nomiarch.smoke"], timeout=180))
             boundary = json.loads(provider.remote(command + ["deployment/worker", "--", "python3", "-m", "nomiarch.smoke", "--boundary"], timeout=60))
             result = {"validation": {"status": "passed", "checks": {"core": core, "worker_boundary": boundary}}, "run_directory": str(directory)}
+            if run.get('foundation') and run['config']['target'] == 'local':
+                from nomiarch.foundation.network import verify as verify_network
+                result['validation']['checks']['guest_egress'] = verify_network(provider)
             write_json(directory / "verification.json", result)
             return result
         if args.action == "backup":

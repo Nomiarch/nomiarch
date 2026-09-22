@@ -2,6 +2,8 @@ name: Build customer preview
 on:
   push:
     tags: ['v0.1.0.dev*']
+    branches: [main]
+    paths: ['nomiarch/__init__.py']
   pull_request:
     paths:
       - '.github/workflows/preview-release.yml'
@@ -68,12 +70,15 @@ jobs:
           path: dist/
           retention-days: 7
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: package
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: preview-*
@@ -82,14 +87,19 @@ jobs:
       - name: Publish prerelease after both architecture gates pass
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
         run: |
           cat > notes.md <<'EOF'
-          Engineering preview: terminal installation and maintenance wizard, bundled local inference, policy enforcement and audit evidence.
+          Engineering preview: bundled local inference, policy enforcement, audit evidence and bounded foundation observation evaluation. Core evaluates submitted controller measurements and produces proposals; it has no deployment or repository credentials.
 
           Download the controller ZIP, bundle TAR, public PEM and SHA256SUMS for your architecture. Read the included READ-ME before running. Ubuntu 24.04 guest installation, repair, upgrade and encrypted payload recovery are gated on both architectures. Actual Multipass host combinations, physical air-gap installation and Azure provisioning remain unqualified.
 
           Keys are generated separately for each preview build; obtain approval of the public PEM SHA-256 through your trusted channel before offline use. The private signing keys are not published. This is not a production signing service or a stable release.
           EOF
-          gh release create "$RELEASE_TAG" dist/* --repo "$REPOSITORY" --prerelease --verify-tag --title "Nomiarch $RELEASE_TAG — customer preview" --notes-file notes.md
+          RELEASE_TAG="$(python3 -c 'from nomiarch import __version__; print("v"+__version__)')"
+          if gh release view "$RELEASE_TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo 'The immutable preview release already exists; no assets were replaced.'
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" dist/* --repo "$REPOSITORY" --target "$SOURCE_COMMIT" --prerelease --title "Nomiarch $RELEASE_TAG — customer preview" --notes-file notes.md

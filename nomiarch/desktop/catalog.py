@@ -1,5 +1,6 @@
 """Reviewed download pins. Desktop 0.1.0.dev3 installs the tested Core dev2."""
-DESKTOP_VERSION = '0.1.0.dev3'
+DESKTOP_VERSION = '0.1.0.dev4'
+RELEASE_READY = False  # Set after the matching Core artifacts pass both architecture gates.
 CORE_VERSION = '0.1.0.dev2'
 BASE = 'https://github.com/Nomiarch/nomiarch/releases/download/v0.1.0.dev2/'
 IMAGE_BASE = 'https://cloud-images.ubuntu.com/releases/noble/release-20260911/'
