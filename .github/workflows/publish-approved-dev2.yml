@@ -1,0 +1,62 @@
+name: Publish approved dev2 preview
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-approved-dev2.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Verify the exact successful source build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api repos/Nomiarch/nomiarch/actions/runs/35762516342 > source-run.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("source-run.json"))
+          assert r["conclusion"] == "success" and r["status"] == "completed"
+          assert r["head_sha"] == "c06bc63254a76d116847b7ac1a1efe2456acd489"
+          assert r["path"] == ".github/workflows/preview-release.yml"
+          PY
+          gh api repos/Nomiarch/nomiarch/git/commits/c06bc63254a76d116847b7ac1a1efe2456acd489 --jq .tree.sha > tested-tree.txt
+          gh api repos/Nomiarch/nomiarch/git/commits/bda7714424350f5e3e54978a934bf77ec0fa7c0d --jq .tree.sha > release-tree.txt
+          cmp tested-tree.txt release-tree.txt
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Nomiarch/nomiarch
+          run-id: 35762516342
+          github-token: ${{ github.token }}
+          pattern: preview-*
+          merge-multiple: true
+          path: dist
+      - name: Verify and publish the approved artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS-amd64.txt
+          sha256sum --check SHA256SUMS-arm64.txt
+          cat > ../release-notes.md <<'EOF'
+          Nomiarch 0.1.0.dev2 — engineering preview.
+
+          Start at https://nomiarch.com/docs/running/ for the customer installation and maintenance guide. Download the controller ZIP, signed bundle TAR, public PEM and SHA256SUMS for your architecture. Python 3.11+, OpenSSL, Multipass and an approved Ubuntu 24.04 cloud image are required.
+
+          These are the exact artifacts tested in https://github.com/Nomiarch/nomiarch/actions/runs/35762516342. Both amd64 and arm64 passed Ubuntu guest installation, repair, upgrade and encrypted recovery. The release target has the identical source tree as the tested commit.
+
+          The wizard offers install, upgrade, repair, verify, backup and saved status. The included task checks sample configuration using a local model and records evidence. There is no browser dashboard or live infrastructure remediation in this preview.
+
+          Preview signing keys are unique to each architecture/build. Verify the public PEM fingerprint through your trusted channel before offline admission. Private signing keys are not distributed. Physical air-gap installation, actual Multipass host combinations and live Azure provisioning remain unqualified.
+          EOF
+          gh release create v0.1.0.dev2 ./* --target bda7714424350f5e3e54978a934bf77ec0fa7c0d --prerelease --title "Nomiarch v0.1.0.dev2 — customer preview" --notes-file ../release-notes.md
