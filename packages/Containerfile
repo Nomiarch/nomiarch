@@ -1,0 +1,8 @@
+ARG PYTHON_IMAGE
+FROM ${PYTHON_IMAGE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+WORKDIR /app
+COPY nomiarch /app/nomiarch
+COPY --chmod=755 opa /usr/local/bin/opa
+USER 10001:10001
+CMD ["python3", "-m", "nomiarch.core.server"]

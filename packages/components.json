@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "k3s_version": "v1.37.0+k3s1",
+  "opa_version": "v1.20.2",
+  "architectures": {
+    "amd64": {
+      "k3s": {
+        "url": "https://github.com/k3s-io/k3s/releases/download/v1.37.0%2Bk3s1/k3s",
+        "sha256": "39eed8f53f277497dfc2542f66eab0ed68a94dfc598946dbebfb50366916c7a2"
+      },
+      "k3s-images.tar.zst": {
+        "url": "https://github.com/k3s-io/k3s/releases/download/v1.37.0%2Bk3s1/k3s-airgap-images-amd64.tar.zst",
+        "sha256": "0b4ff0d6e233de54be4e16cb5aa298fd53ad88f66ad8ae31093b5ef4dcefcdd0"
+      },
+      "opa": {
+        "url": "https://github.com/open-policy-agent/opa/releases/download/v1.20.2/opa_linux_amd64_static",
+        "sha256": "69da5179ee403d10fa11bab6cfb4ffb0d23dba5f9b682fa977db772a1da5670f"
+      },
+      "install-k3s.sh": {
+        "url": "https://raw.githubusercontent.com/k3s-io/k3s/v1.37.0%2Bk3s1/install.sh",
+        "sha256": "ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b"
+      },
+      "age.tar.gz": {
+        "url": "https://dl.filippo.io/age/v1.3.2?for=linux/amd64",
+        "sha256": "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10"
+      }
+    },
+    "arm64": {
+      "k3s": {
+        "url": "https://github.com/k3s-io/k3s/releases/download/v1.37.0%2Bk3s1/k3s-arm64",
+        "sha256": "9bc2c128a597bf7c10ee45df844f2838251ba53806f7673d7fea24a6cb1b6a99"
+      },
+      "k3s-images.tar.zst": {
+        "url": "https://github.com/k3s-io/k3s/releases/download/v1.37.0%2Bk3s1/k3s-airgap-images-arm64.tar.zst",
+        "sha256": "b3bd28d3a20144927b25ebb1d255a16ce55bb050b9af5e63abd1bf91c0838fe5"
+      },
+      "opa": {
+        "url": "https://github.com/open-policy-agent/opa/releases/download/v1.20.2/opa_linux_arm64_static",
+        "sha256": "431bed5a365578241ab06c7cc1c7d0cdff8c11dcbc6f12c3488590deb8b8d66d"
+      },
+      "install-k3s.sh": {
+        "url": "https://raw.githubusercontent.com/k3s-io/k3s/v1.37.0%2Bk3s1/install.sh",
+        "sha256": "ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b"
+      },
+      "age.tar.gz": {
+        "url": "https://dl.filippo.io/age/v1.3.2?for=linux/arm64",
+        "sha256": "6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4"
+      }
+    }
+  },
+  "age_version": "v1.3.2"
+}

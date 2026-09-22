@@ -1,0 +1,12 @@
+{
+  "api_version": "nomiarch.io/v1alpha1",
+  "name": "local-lab",
+  "target": "local",
+  "architecture": "amd64",
+  "capacity": {"cpus": 2, "memory_gib": 8, "disk_gib": 40},
+  "local": {
+    "image": "../.nomiarch/images/ubuntu-24.04.img",
+    "image_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "lifecycle": {"destroy_after": false, "max_runtime_minutes": 30}
+}

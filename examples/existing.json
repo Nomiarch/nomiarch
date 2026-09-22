@@ -1,0 +1,14 @@
+{
+  "api_version": "nomiarch.io/v1alpha1",
+  "name": "onprem-lab",
+  "target": "existing",
+  "architecture": "amd64",
+  "capacity": {"cpus": 2, "memory_gib": 8, "disk_gib": 40},
+  "existing": {
+    "host": "192.0.2.20",
+    "ssh_user": "ubuntu",
+    "ssh_key": "~/.ssh/id_ed25519",
+    "known_hosts": "~/.ssh/known_hosts"
+  },
+  "lifecycle": {"destroy_after": false, "max_runtime_minutes": 30}
+}

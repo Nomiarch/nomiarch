@@ -1,0 +1,23 @@
+{
+  "api_version": "nomiarch.io/v1alpha1",
+  "name": "azure-lab",
+  "target": "azure",
+  "architecture": "amd64",
+  "capacity": {"cpus": 2, "memory_gib": 8, "disk_gib": 40},
+  "azure": {
+    "subscription_id": "00000000-0000-0000-0000-000000000000",
+    "location": "canadacentral",
+    "vm_size": "Standard_B2ms",
+    "ssh_user": "nomiarch",
+    "ssh_key": "~/.ssh/id_ed25519",
+    "ssh_public_key": "~/.ssh/id_ed25519.pub",
+    "admin_cidr": "10.20.0.0/24",
+    "image": {
+      "publisher": "Canonical",
+      "offer": "ubuntu-24_04-lts",
+      "sku": "server",
+      "version": "REPLACE_WITH_EXACT_VERSION"
+    }
+  },
+  "lifecycle": {"destroy_after": true, "max_runtime_minutes": 30}
+}

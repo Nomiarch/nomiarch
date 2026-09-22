@@ -1,0 +1,35 @@
+name: Validate Nomiarch
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Get checksum-pinned test tools
+        run: |
+          python3 scripts/ci_tools.py .nomiarch/ci-tools
+          echo "$GITHUB_WORKSPACE/.nomiarch/ci-tools" >> "$GITHUB_PATH"
+      - name: Python behavior, artifact admission, and encrypted recovery
+        run: python3 -m unittest discover -s tests -v
+      - name: Local service integration
+        run: python3 -m nomiarch dev demo
+      - name: Policy enforcement
+        run: opa test policies -v
+      - name: Azure HCL formatting and provider schema
+        working-directory: infra/azure
+        run: |
+          tofu fmt -check
+          tofu init -backend=false -input=false -lockfile=readonly
+          tofu validate
