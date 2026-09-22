@@ -44,7 +44,8 @@ def atomic_write(path, data, mode=0o600):
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=".write-")
     try:
         with os.fdopen(fd, "wb") as f:
-            os.fchmod(f.fileno(), mode)
+            if os.name != "nt":
+                os.fchmod(f.fileno(), mode)
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
@@ -73,11 +74,28 @@ def read_json(path):
 
 @contextlib.contextmanager
 def file_lock(path, blocking=True):
-    import fcntl  # Controllers run on Linux/macOS; Windows uses WSL2.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with path.open("a") as f:
         os.chmod(path, 0o600)
+        if os.name == "nt":
+            import msvcrt
+            # Lock one fixed byte; Windows byte-range locks need a real byte.
+            if path.stat().st_size == 0:
+                f.write("0")
+                f.flush()
+            f.seek(0)
+            try:
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+            except OSError as e:
+                raise NomiarchError(f"Another controller owns {path.parent}") from e
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+        import fcntl
         try:
             fcntl.flock(f, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except BlockingIOError as e:
@@ -102,7 +120,8 @@ class Runner:
         try:
             p = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 start_new_session=True)
+                                 start_new_session=os.name != "nt",
+                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except OSError as e:
             raise NomiarchError(f"Cannot start {args[0]}: {e}") from e
         try:
@@ -110,11 +129,18 @@ class Runner:
         except BaseException as e:
             # Kill the process group, including provider and SSH child processes.
             # A remote cloud operation may continue; teardown must reconcile it.
-            os.killpg(p.pid, signal.SIGTERM)
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+            else:
+                os.killpg(p.pid, signal.SIGTERM)
             try:
                 p.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(p.pid, signal.SIGKILL)
+                if os.name == "nt":
+                    p.kill()
+                else:
+                    os.killpg(p.pid, signal.SIGKILL)
                 p.communicate()
             if isinstance(e, subprocess.TimeoutExpired):
                 raise NomiarchError(f"{Path(args[0]).name} exceeded its time limit; a remote operation may still need cleanup") from e
