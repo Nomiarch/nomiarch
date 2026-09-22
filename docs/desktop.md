@@ -1,9 +1,12 @@
 # Nomiarch Desktop Setup
 
 The desktop preview replaces terminal steps with a native window. Desktop version
-0.1.0.dev4 uses Core 0.1.0.dev3 once its architecture-specific artifacts pass admission.
+0.1.0.dev5 uses the admitted Core 0.1.0.dev3 artifacts.
 See [customer scaffolds and human approval](foundation.md) for the new setup flow,
 Azure prerequisites, live observations and the precise limits of this preview.
+Organisation review can use public GitHub or an existing internal GitHub Enterprise
+Server. See [internal repository setup](foundation.md#internal-github-enterprise-server)
+for the server address, public CA certificate and disconnected-site steps.
 
 Use the [customer installation guide](https://nomiarch.com/docs/running/) for separate
 Windows, macOS and Linux tabs with the appropriate downloads and opening steps.
