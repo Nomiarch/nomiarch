@@ -36,6 +36,17 @@ jobs:
           sudo python3 -m nomiarch host repair --bundle "$GITHUB_WORKSPACE/.nomiarch/release.tar" --trusted-key "$GITHUB_WORKSPACE/.nomiarch/keys/public.pem"
       - name: Upgrade and encrypted appliance recovery drill
         run: sudo python3 scripts/guest_recovery_test.py
+      - name: Missing images fail at the local registry boundary
+        run: |
+          sudo python3 - <<'PY'
+          import subprocess
+          for image in ("nomiarch-offline-probe.invalid/absent:never", "docker.io/library/nomiarch-offline-probe:never"):
+              result = subprocess.run(["/usr/local/bin/k3s", "crictl", "pull", image], capture_output=True, text=True, timeout=30)
+              output = result.stdout + result.stderr
+              assert result.returncode != 0, "An unbundled probe image was unexpectedly available"
+              assert "127.0.0.1:65535" in output and "connection refused" in output, output
+          print("Unknown and default registry pulls fail at the unavailable loopback mirror")
+          PY
       - name: Diagnostics
         if: failure()
         run: |

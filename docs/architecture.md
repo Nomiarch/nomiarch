@@ -105,8 +105,10 @@ agent remain provider dependencies; Azure is not described as physically air-gap
 
 Application network policies deny new connections except named service and internal DNS
 paths. CoreDNS has no external forwarding, and its boot configuration does not inherit a
-connected host's external resolver. Workload images use `imagePullPolicy: Never`. Installation
-must fail on missing bytes rather than reconnect to finish downloading.
+connected host's external resolver. Workload images use `imagePullPolicy: Never`. A wildcard
+registry mirror points to an unavailable loopback endpoint, with default registry fallback
+disabled, so missing system images cannot trigger upstream downloads. Installation must
+fail on missing bytes rather than reconnect to finish downloading.
 After initial DNS admission, a K3s `coredns.yaml.skip` file preserves these existing addon
 resources and prevents restart from restoring the packaged forwarding configuration.
 CoreDNS/K3s version changes therefore require a separately qualified migration.
@@ -120,6 +122,7 @@ clean-host restore, and dual-target parity evidence.
 ## Sources used for the implementation
 
 - [K3s offline installation and upgrade](https://docs.k3s.io/installation/airgap)
+- [K3s registry mirrors and default-endpoint behavior](https://docs.k3s.io/installation/private-registry)
 - [K3s packaged-component ownership and skip files](https://docs.k3s.io/installation/packaged-components)
 - [Multipass image launch](https://canonical.com/multipass/docs/latest/reference/command-line-interface/launch/)
 - [AzureRM 4.49.0 Linux VM documentation](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.49.0/website/docs/r/linux_virtual_machine.html.markdown)

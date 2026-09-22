@@ -161,6 +161,10 @@ def install(bundle_path, trusted_key, action="install", device=None, recipient=N
             # Packaged DNS must never inherit a connected host's upstream resolver,
             # including during reboot before the local DNS ConfigMap is restored.
             atomic_write("/etc/nomiarch/resolv.conf", "nameserver 127.0.0.1\n")
+            # Disabling the default endpoint only covers configured registries.
+            # A wildcard mirror directs every missing image to an intentionally
+            # unavailable loopback endpoint; admitted archives supply all images.
+            atomic_write(config_dir / "registries.yaml", 'mirrors:\n  "*":\n    endpoint:\n      - "http://127.0.0.1:65535"\n')
             atomic_write(config_dir / "config.yaml", f"data-dir: {ROOT}/k3s\nnode-name: nomiarch\nwrite-kubeconfig-mode: '0600'\n"
                          "secrets-encryption: true\ndisable-default-registry-endpoint: true\n"
                          "resolv-conf: /etc/nomiarch/resolv.conf\n"
