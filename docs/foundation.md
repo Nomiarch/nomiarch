@@ -1,7 +1,7 @@
 # Customer-owned setup and human approval
 
-Desktop 0.1.0.dev4 introduces customer scaffolds and uses Core 0.1.0.dev3 after
-the release files pass admission. Use the downloads linked from the
+Desktop 0.1.0.dev5 adds internal GitHub Enterprise Server approval support and uses
+the admitted Core 0.1.0.dev3 artifacts. Use the downloads linked from the
 [customer guide](https://nomiarch.com/docs/running/).
 
 ## First local installation
@@ -14,8 +14,8 @@ the release files pass admission. Use the downloads linked from the
 4. Choose **Isolated VM**, or **Disconnected site** when the computer is already
    inside your approved offline boundary.
 5. Choose a new configuration folder. Personal evaluation can use local records.
-   Organisation setup requires a private GitHub repository or an internal-repository
-   export. Internal repository deployment integration is not included yet.
+   Organisation setup requires a private public-GitHub or internal GitHub Enterprise
+   Server repository. Other repository products support configuration export only.
 6. Let the wizard check VM support. On Windows/macOS, **Install VM support** opens
    the verified Canonical installer. On supported Windows editions, **Enable Hyper-V**
    requests Windows administrator approval; restart when asked. Linux users install
@@ -92,6 +92,52 @@ Administration read access to inspect protection; do not grant it protection byp
 cloud deployment rights. Approval verification only needs the corresponding read access.
 Use customer-owned deployment credentials independently of the proposal account.
 
+### Internal GitHub Enterprise Server
+
+Use an **existing customer-operated GitHub Enterprise Server** inside your network.
+The wizard creates a repository on that server; it does not install or license the
+Git server. The server must support the REST API and the branch protections above.
+This preview targets the documented GHES 3.21 REST contract; qualify it against your
+site's server before relying on it for a customer deployment.
+
+1. Ask your administrator for the HTTPS server address, customer owner, reviewer
+   logins and a token issued by that server. If the server uses a private CA, also
+   get the public CA certificate chain in PEM format. No private key is needed.
+2. For an offline installation, choose **Disconnected site**, then **Organisation**.
+   Select **Internal GitHub Enterprise Server with human review**.
+3. Enter the server's root address, such as `https://git.company.internal`.
+   Do not add `/api/v3`; the wizard adds the API path. An explicit HTTPS port is allowed.
+4. Use **Choose public CA certificate…** if needed. Compare the displayed file SHA-256
+   with the value provided by your administrator. The public certificates become part
+   of the reviewed configuration; private keys and the repository token never do.
+   Without a selected file, the Python TLS runtime uses this computer's available
+   trusted certificates. If that trust cannot verify your server, supply its public CA.
+5. Enter the owner, dedicated repository name, comma-separated human reviewer logins
+   and token. Changing the address, certificate or account settings clears the token;
+   enter it again after correcting those settings.
+6. Complete VM prerequisites and select the admitted offline kit. Create the
+   configuration, create the private repository and open the configuration PR.
+7. A different designated person reviews and merges the final commit on the internal
+   server. Enter its PR number, prepare the deployment plan, and approve the plan.
+
+The controller requires verified TLS with the original hostname. It connects only to
+RFC 1918 IPv4, IPv6 unique-local or loopback addresses, rejects mixed private/public DNS
+answers, and uses the checked numeric address without resolving a second time. Public,
+link-local, shared-address and IPv6 global-unicast destinations are not supported by
+this internal recipe. Configure internal DNS and a direct private route; environment
+proxies and redirects are not used. A public GitHub service cannot be selected here.
+
+Installation, observation, repair, upgrade and removal use the same internal server
+and final-commit human review checks. Evidence includes the server origin, repository,
+PR, commit and reviewer logins. Tokens remain in memory and are scoped to the selected
+repository and certificate settings. They are never sent to Core. Import new release
+kits through the site's approved transfer process before upgrading.
+
+New folders use recipe **0.3.0**. Existing **0.2.0** folders remain supported with their
+original file contents and runtime pins. Changing an existing foundation's repository
+authority is not a supported in-place migration; create a new configuration for an
+internal deployment. Other internal Git products remain configuration-export only.
+
 The Azure profile, generated keys, saved plans and state stay in the controller's private
 application directory. Core receives none of those credentials. Use the operating system's
 disk encryption/access controls and back up that directory separately from Git. This preview
@@ -141,10 +187,11 @@ transfer process. Linux VM support must be admitted through your software-manage
 
 Choose **Disconnected site** on the destination. File admission and VM-support setup
 use local files and fail if a required file is missing; they do not silently download it.
-Private GitHub is still an online service: a real air gap needs internal Git/reviews and
-admitted software updates inside the boundary. Internal Git approval integration is currently
-an export path, so organisation deployment stops after scaffold export. Personal local
-evaluation can proceed with local human approval.
+Public GitHub needs Internet access. Organisation installations inside the boundary can
+use the internal GitHub Enterprise Server steps above, including new PRs for later
+operations. Keep the controller, Git server, DNS, identity services and reviewers'
+computers inside the admitted network. Personal evaluation can use local human approval.
+Selecting **Export for another review system** stops at the configuration folder.
 
 The local guest boundary rejects new outbound IPv4/IPv6 traffic except loopback, DHCP and
 the fixed K3s pod/service ranges. Replies to permitted incoming administration sessions
@@ -193,3 +240,7 @@ Core observation evaluation, generated Terraform schema and IPv4/IPv6 rules in d
 Linux network namespaces. Native package tests cover Windows, Intel Mac, Apple silicon and
 Linux screens and the packaged Microsoft helper. These gates do not substitute for an
 end-to-end installation on a customer hypervisor or a funded, privately routed Azure account.
+Internal repository tests use a real local HTTPS server with generated CA certificates
+and REST fixtures. They cover hostname/CA failures, redirect/proxy isolation, private DNS,
+exact file/review matching and operation approval gates. They do not establish qualification
+against a deployed customer GitHub Enterprise Server or a physically disconnected site.

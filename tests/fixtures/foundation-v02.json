@@ -1,0 +1,129 @@
+[
+  {
+    "files": {
+      ".github/CODEOWNERS": "815354dba488d78da289c4d126b0a82ef8eb0bbbe2c76596faf27ea5fa6481e4",
+      ".gitignore": "71ca83f6c2ca7f0b07c7e24dd84f60c352753b7b11fa0e33d8f3fb03501d41b2",
+      "README.md": "ecb3fe9a0c29a854f01246cb3d2b3ec32e511b6ce69deb45c3f386adefef707e",
+      "environments/evaluation/local.json": "82eba6be17d1a3d44b9a0f93485513da354047c744682dfb3f5bcaeaa4f44435",
+      "foundation.json": "85442d460ad19874320d36fdc719c183557096ab528da09a5578d975d8380f65",
+      "policies/approvals.json": "881a9803a8ee6d236313dbc4268112a0ced2a8e44a3c32961657385e146bbc2e",
+      "policies/network.json": "f7fb31be74466952ecb43e3d0ecd6a7bb1f49e0827dc0f8a25b9f12e019d9a59",
+      "runtime.json": "bfe11523f501edc1bdeab4478718076a0e2f8e6d78f1cf6ce5cb998c2c14b889"
+    },
+    "project": {
+      "configuration": {
+        "api_version": "nomiarch.io/v1alpha1",
+        "architecture": "amd64",
+        "capacity": {
+          "cpus": 2,
+          "disk_gib": 40,
+          "memory_gib": 8
+        },
+        "lifecycle": {
+          "destroy_after": false,
+          "max_runtime_minutes": 120
+        },
+        "local": {
+          "image": "@admitted-image",
+          "image_sha256": "612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354"
+        },
+        "name": "customer-vm",
+        "target": "local"
+      },
+      "environment": "evaluation",
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "isolation": "local-isolated",
+      "organisation": "customer",
+      "recipe_version": "0.2.0",
+      "repository": {
+        "approvers": [
+          "reviewer"
+        ],
+        "mode": "github",
+        "name": "foundation",
+        "owner": "customer"
+      },
+      "runtime": {
+        "architecture": "amd64",
+        "bundle_sha256": "4896aeb3ddb2fcbecd264c2ff798bdb4d63ab7f75e184d2d2217e1f346e96a85",
+        "core_version": "0.1.0.dev3",
+        "release_key_sha256": "5d93c72f8580f20479db91c14e5bf7612f777e5c3b2708f2a1cbfd51dd8d82d8"
+      },
+      "schema": 1,
+      "usage": "organisation"
+    }
+  },
+  {
+    "files": {
+      ".github/CODEOWNERS": "815354dba488d78da289c4d126b0a82ef8eb0bbbe2c76596faf27ea5fa6481e4",
+      ".gitignore": "71ca83f6c2ca7f0b07c7e24dd84f60c352753b7b11fa0e33d8f3fb03501d41b2",
+      "README.md": "e8e06db2ac9f63f0ac5182173c1b421323cc0bcbd610cbe64eab1226e616da5c",
+      "environments/evaluation/.terraform.lock.hcl": "e57dbb7dcc9911ef9bcc420ec2d560a30065a9e6767229b9f6141d8a1bd00699",
+      "environments/evaluation/main.tf": "38c886d9f744699b1e364bd00f21f0f0d003039d6cd69c2fe2dea84c4f26afc1",
+      "environments/evaluation/settings.auto.tfvars.json": "a88135037ca2931ed0158109a050dc3f6944dfae372b583a58830a06c18edffb",
+      "environments/evaluation/variables.tf": "6132546337b0e90fe9d1de403b9edd46a636d5eb1e25ca7b0e28013da130d804",
+      "foundation.json": "0f8e18274d3540b5019fff97427c3919409ca08f3bf6af3732619821c5ad8cdf",
+      "modules/azure/.terraform.lock.hcl": "e57dbb7dcc9911ef9bcc420ec2d560a30065a9e6767229b9f6141d8a1bd00699",
+      "modules/azure/main.tf": "de1f9578547107f5f0feb67f630d6985e4a5d5b5305f0e3caf89a42c784df58d",
+      "modules/azure/variables.tf": "6132546337b0e90fe9d1de403b9edd46a636d5eb1e25ca7b0e28013da130d804",
+      "policies/approvals.json": "881a9803a8ee6d236313dbc4268112a0ced2a8e44a3c32961657385e146bbc2e",
+      "policies/network.json": "d667a4609543459147ebec99849f081d144e43db2320190445e15f07e637c32d",
+      "runtime.json": "bfe11523f501edc1bdeab4478718076a0e2f8e6d78f1cf6ce5cb998c2c14b889"
+    },
+    "project": {
+      "configuration": {
+        "api_version": "nomiarch.io/v1alpha1",
+        "architecture": "amd64",
+        "azure": {
+          "admin_cidr": "10.20.30.0/24",
+          "image": {
+            "offer": "ubuntu-24_04-lts",
+            "publisher": "Canonical",
+            "sku": "server",
+            "version": "24.04.202609010"
+          },
+          "location": "canadacentral",
+          "ssh_key": "@controller",
+          "ssh_public_key": "@controller",
+          "ssh_user": "nomiarch",
+          "subnet_cidr": "10.88.1.0/24",
+          "subscription_id": "00000000-0000-0000-0000-000000000000",
+          "vm_size": "Standard_D2s_v5",
+          "vnet_cidr": "10.88.0.0/16"
+        },
+        "capacity": {
+          "cpus": 2,
+          "disk_gib": 40,
+          "memory_gib": 8
+        },
+        "lifecycle": {
+          "destroy_after": false,
+          "max_runtime_minutes": 120
+        },
+        "name": "customer-vm",
+        "target": "azure"
+      },
+      "environment": "evaluation",
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "isolation": "cloud-restricted",
+      "organisation": "customer",
+      "recipe_version": "0.2.0",
+      "repository": {
+        "approvers": [
+          "reviewer"
+        ],
+        "mode": "github",
+        "name": "foundation",
+        "owner": "customer"
+      },
+      "runtime": {
+        "architecture": "amd64",
+        "bundle_sha256": "4896aeb3ddb2fcbecd264c2ff798bdb4d63ab7f75e184d2d2217e1f346e96a85",
+        "core_version": "0.1.0.dev3",
+        "release_key_sha256": "5d93c72f8580f20479db91c14e5bf7612f777e5c3b2708f2a1cbfd51dd8d82d8"
+      },
+      "schema": 1,
+      "usage": "organisation"
+    }
+  }
+]

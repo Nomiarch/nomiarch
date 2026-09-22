@@ -76,7 +76,7 @@ def apply(change_directory, source, expected_digest, *, repository_check=None, f
         value, snapshot = scaffold.load_supported(record['project_directory'], source)
         require(snapshot == record['snapshot'] and deployment.inputs(change_dir) == record['inputs'], 'Proposed configuration or plan changed')
         proof = {'digest': expected_digest, 'time': time.time(), 'mode': 'local-human'}
-        if value['repository']['mode'] == 'github':
+        if value['repository']['mode'] in scaffold.REVIEW_MODES:
             require(repository_check is not None, 'Current human repository approval is required')
             proof['repository'] = repository_check(value, snapshot)
         require(value['usage'] != 'organisation' or 'repository' in proof, 'Organisation changes need independent human review')

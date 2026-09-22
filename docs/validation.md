@@ -51,6 +51,15 @@ establish the version of every subsequent container build from a moving upstream
 
 ## v0.1.0 qualification matrix
 
+Desktop dev5 adds tests for internal GitHub Enterprise Server transport and review.
+The fixture serves the GitHub REST contract over actual local HTTPS. It verifies
+private-address admission, single-resolution connection, certificate/hostname checks,
+redirect refusal, proxy exclusion, token scoping and stale/bot/dismissed review rejection.
+Controller tests require fresh internal review for install, repair, upgrade and removal.
+Both prior recipe 0.2.0 scaffold snapshots remain byte-for-byte compatible. Native package
+CI runs these tests and renders the internal repository screen on all four desktop targets.
+An actual customer GitHub Enterprise Server deployment remains a qualification gate.
+
 | Gate | Required evidence before a stable release |
 | --- | --- |
 | B01 | Environment schema and credential-reference rejection cases on both controllers |

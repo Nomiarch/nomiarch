@@ -78,7 +78,7 @@ def inputs(directory):
 def prepare(project_dir, state_dir, source, paths, *, factory=get_provider):
     value, snapshot = scaffold.load_supported(project_dir, source)
     require(value['repository']['mode'] != 'offline',
-            'Offline organisation scaffolds can be exported. Connect an approved internal review integration before deployment; this preview cannot verify internal approvals.')
+            'This configuration uses export-only review. Create a configuration with a supported repository integration before deployment.')
     config = copy.deepcopy(value['configuration'])
     require(value['runtime'] == scaffold.admitted_runtime(config['architecture']), 'Use the matching desktop release for these Core pins, or generate a configuration for this app’s admitted release')
     if config['target'] == 'local': config['local']['image'] = str(Path(paths['image']).resolve())
@@ -172,7 +172,7 @@ def apply(directory, source, expected_digest, *, repository_check=None, factory=
         run, record, value = validate_plan(directory, source)
         require(hmac.compare_digest(record['digest'], expected_digest), 'Displayed approval does not match the saved plan')
         evidence = {'mode': 'local-human', 'time': time.time(), 'digest': expected_digest}
-        if value['repository']['mode'] == 'github':
+        if value['repository']['mode'] in scaffold.REVIEW_MODES:
             require(repository_check is not None, 'A current human-reviewed repository change is required')
             evidence['repository'] = repository_check(value, record['snapshot'])
         require(value['usage'] != 'organisation' or 'repository' in evidence, 'Organisation approval cannot be bypassed by a local confirmation')

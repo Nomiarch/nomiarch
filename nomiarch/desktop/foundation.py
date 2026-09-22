@@ -1,13 +1,15 @@
 """Customer setup screens. Tk values are captured before starting background work."""
+import hashlib
 import json
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
-from nomiarch.common import NomiarchError, read_json, write_json
+from nomiarch.common import NomiarchError, canonical, read_json, write_json
 from nomiarch.foundation import changes, deployment, maintenance, observe, scaffold
 from nomiarch.foundation.repository import GitHub
+from nomiarch.foundation.repository_transport import certificate_context, server_origin
 from . import cloud, service
 from .catalog import PINS
 
@@ -18,10 +20,14 @@ class FoundationScreens:
                             'repo_mode': 'local', 'repo_owner': '', 'repo_name': 'nomiarch-environment',
                             'approvers': '', 'github_token': '', 'pull_number': '', 'isolation': 'local-isolated',
                             'project_folder': '', 'subscription': '', 'region': 'canadacentral',
-                            'vm_size': 'Standard_D2s_v5', 'admin_cidr': '', 'subnet': ''}.items():
+                            'vm_size': 'Standard_D2s_v5', 'admin_cidr': '', 'subnet': '', 'server_url': '',
+                            'ca_status': 'Use this computer’s trusted certificates'}.items():
             setattr(self, name, tk.StringVar(value=value))
         self.target, self.project_path, self.azure_image = 'local', None, None
         self.accounts, self.subnets = [], []
+        self.repository_ca, self.token_scope = None, None
+        for name in ('repo_mode', 'repo_owner', 'repo_name', 'approvers', 'server_url'):
+            getattr(self, name).trace_add('write', lambda *_: self.github_token.set(''))
 
     def customer(self, target):
         self.target, self.project_path = target, None
@@ -43,7 +49,7 @@ class FoundationScreens:
         if self.usage.get() == 'organisation' and self.repo_mode.get() == 'local': self.repo_mode.set('github')
         if self.isolation.get() == 'disconnected':
             self.mode.set('offline')
-            self.repo_mode.set('offline' if self.usage.get() == 'organisation' else 'local')
+            if self.repo_mode.get() == 'github': self.repo_mode.set('github-enterprise')
         if not self.project_folder.get(): self.project_folder.set(str(self.root_dir / 'projects' / (self.organisation.get() + '-' + self.environment.get())))
         self.clear('Keep control of your configuration', 'The folder contains your settings and the reviewed recipe. Credentials, deployment plans and state are stored separately.', '02  Customer configuration')
         self.entry('New configuration folder', self.project_folder)
@@ -52,7 +58,8 @@ class FoundationScreens:
             ttk.Radiobutton(self.content, text='Keep a local configuration and approval record', variable=self.repo_mode, value='local').pack(anchor='w', pady=5)
         if self.isolation.get() != 'disconnected':
             ttk.Radiobutton(self.content, text='Private GitHub repository with human review', variable=self.repo_mode, value='github').pack(anchor='w', pady=5)
-        ttk.Radiobutton(self.content, text='Export for an internal repository (deployment integration not included yet)', variable=self.repo_mode, value='offline').pack(anchor='w', pady=5)
+        ttk.Radiobutton(self.content, text='Internal GitHub Enterprise Server with human review', variable=self.repo_mode, value='github-enterprise').pack(anchor='w', pady=5)
+        ttk.Radiobutton(self.content, text='Export for another review system (configuration only)', variable=self.repo_mode, value='offline').pack(anchor='w', pady=5)
         self.button('Continue', self.repository_next, True)
         self.button('Back', lambda: self.customer(self.target))
 
@@ -61,20 +68,79 @@ class FoundationScreens:
         if path: self.project_folder.set(str(Path(path) / (self.organisation.get() + '-' + self.environment.get())))
 
     def repository_next(self):
-        if self.repo_mode.get() == 'github': self.github_screen()
+        if self.repo_mode.get() in scaffold.REVIEW_MODES: self.github_screen()
         elif self.target == 'azure': self.cloud_screen()
         else: self.prerequisites()
 
     def github_screen(self):
+        self.github_token.set('')
+        internal = self.repo_mode.get() == 'github-enterprise'
         self.clear('Your organisation’s repository', 'A designated human must approve the final pull request. The proposer cannot approve their own change. Use a separate customer account for deployment.', '02  Repository access')
+        if internal:
+            self.entry('Internal HTTPS address', self.server_url)
+            ttk.Label(self.content, text='Use your existing internal GitHub Enterprise Server, for example https://git.company.internal. It must resolve to private network addresses.', wraplength=820).pack(anchor='w', pady=5)
+            self.button('Choose public CA certificate…', self.choose_repository_ca)
+            self.button('Use this computer’s certificate trust', self.reset_repository_ca)
+            ttk.Label(self.content, textvariable=self.ca_status, wraplength=820).pack(anchor='w', pady=5)
         for label, var in [('GitHub owner', self.repo_owner), ('Repository name', self.repo_name), ('Human reviewer logins', self.approvers)]: self.entry(label, var)
         row = ttk.Frame(self.content); row.pack(fill='x', pady=6)
         ttk.Label(row, text='GitHub token', width=24).pack(side='left')
         ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
         ttk.Label(self.content, text='The token stays in this app’s memory. Repository creation needs administration access; later proposal access can be narrower. Your GitHub plan must support protected private branches.', wraplength=820).pack(anchor='w', pady=8)
-        self.button('Repository access guide', lambda: webbrowser.open('https://nomiarch.com/docs/running/#customer-repository'))
-        self.button('Continue', self.cloud_screen if self.target == 'azure' else self.prerequisites, True)
+        if self.isolation.get() != 'disconnected':
+            self.button('Repository access guide', lambda: webbrowser.open('https://nomiarch.com/docs/running/#customer-repository'))
+        self.button('Continue', self.repository_continue, True)
         self.button('Back', self.repository_screen)
+
+    def choose_repository_ca(self):
+        path = filedialog.askopenfilename(title='Choose your administrator’s public PEM CA certificate', filetypes=[('Public certificates', '*.crt *.pem'), ('All files', '*')])
+        if not path: return
+        try:
+            with open(path, 'rb') as stream: data = stream.read(65537)
+            if len(data) > 65536: raise NomiarchError('The public CA file must be at most 64 KiB')
+            certificate = data.decode('ascii')
+            certificate_context(certificate)
+        except Exception as error: messagebox.showerror('Public CA certificate', str(error)); return
+        self.repository_ca = certificate
+        self.github_token.set('')
+        self.ca_status.set('Public CA selected · file SHA-256: ' + hashlib.sha256(data).hexdigest())
+
+    def reset_repository_ca(self):
+        self.repository_ca = None
+        self.github_token.set('')
+        self.ca_status.set('Use this computer’s trusted certificates')
+
+    def repository_settings(self):
+        repository = {'mode': self.repo_mode.get()}
+        if repository['mode'] in scaffold.REVIEW_MODES:
+            repository.update(owner=self.repo_owner.get().strip(), name=self.repo_name.get().strip(),
+                              approvers=[a.strip().lstrip('@') for a in self.approvers.get().split(',') if a.strip()])
+        if repository['mode'] == 'github-enterprise':
+            repository['server_url'] = server_origin(self.server_url.get().strip())
+            if self.repository_ca is not None: repository['ca_certificate'] = self.repository_ca
+        return scaffold.validate_repository(repository, self.usage.get(), self.isolation.get())
+
+    def repository_continue(self):
+        try: self.token_scope = canonical(self.repository_settings())
+        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
+        if self.target == 'azure': self.cloud_screen()
+        else: self.prerequisites()
+
+    def repository_token_entry(self, repository, label='GitHub token (not saved)'):
+        scope = canonical(repository)
+        if self.token_scope != scope: self.github_token.set('')
+        self.token_scope = scope
+        origin = repository.get('server_url', 'https://github.com')
+        ttk.Label(self.content, text='Repository: ' + origin + '/' + repository['owner'] + '/' + repository['name'], wraplength=820).pack(anchor='w', pady=5)
+        row = ttk.Frame(self.content); row.pack(fill='x', pady=5)
+        ttk.Label(row, text=label, width=24).pack(side='left')
+        ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+
+    def repository_token(self, repository):
+        if self.token_scope != canonical(repository):
+            self.github_token.set('')
+            raise NomiarchError('Repository settings changed. Reopen this configuration and enter its token again.')
+        return self.github_token.get()
 
     def cloud_screen(self):
         self.target = 'azure'
@@ -135,10 +201,7 @@ class FoundationScreens:
             config['azure'] = {'subscription_id': self.azure_subscription, 'location': self.region.get(), 'vm_size': self.vm_size.get(),
                                'ssh_user': 'nomiarch', 'ssh_key': '@controller', 'ssh_public_key': '@controller',
                                'admin_cidr': self.admin_cidr.get().strip(), 'subnet_id': self.azure_subnet, 'image': self.azure_image}
-        repository = {'mode': self.repo_mode.get()}
-        if repository['mode'] == 'github':
-            repository.update(owner=self.repo_owner.get().strip(), name=self.repo_name.get().strip(),
-                              approvers=[a.strip().lstrip('@') for a in self.approvers.get().split(',') if a.strip()])
+        repository = self.repository_settings()
         return scaffold.project(config, self.organisation.get(), self.environment.get(), self.usage.get(), self.isolation.get(), repository)
 
     def make_scaffold(self):
@@ -155,16 +218,14 @@ class FoundationScreens:
         ttk.Label(self.content, text=str(self.project_path), wraplength=820).pack(anchor='w', pady=8)
         self.button('Open configuration folder', lambda: service.open_folder(self.project_path))
         mode = value['repository']['mode']
-        if mode == 'github':
-            row = ttk.Frame(self.content); row.pack(fill='x', pady=4)
-            ttk.Label(row, text='GitHub token (not saved)', width=24).pack(side='left')
-            ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+        if mode in scaffold.REVIEW_MODES:
+            self.repository_token_entry(value['repository'])
             self.button('Create a NEW private customer repository', self.create_customer_repo)
             self.button('Open a configuration pull request', self.open_initial_pr)
             self.entry('Approved, merged PR number', self.pull_number)
             self.button('Prepare deployment plan', self.prepare_foundation, True)
         elif mode == 'offline':
-            ttk.Label(self.content, text='Export complete. Copy this folder into your internal review system. This preview cannot verify internal repository approvals, so organisation deployment stops here.', wraplength=820).pack(anchor='w', pady=12)
+            ttk.Label(self.content, text='Export complete. Copy this folder into your review system. This mode does not verify approvals or deploy. For internal GitHub Enterprise Server, select its dedicated option when creating a configuration.', wraplength=820).pack(anchor='w', pady=12)
         else:
             self.button('Prepare deployment plan', self.prepare_foundation, True)
         self.button('Home', self.home)
@@ -172,25 +233,28 @@ class FoundationScreens:
     def create_customer_repo(self):
         if not messagebox.askokcancel('Create customer repository', 'Create a new private repository in the named customer account and require human reviews on main? An existing repository will not be overwritten.'): return
         value, _ = scaffold.load_supported(self.project_path, self.repo)
-        token = self.github_token.get()
-        self.start(lambda: GitHub(token).create_repository(value), lambda url: (self.status.set('Private repository created with required human review.'), webbrowser.open(url)))
+        try: token = self.repository_token(value['repository'])
+        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
+        self.start(lambda: GitHub(token, value['repository']).create_repository(value), lambda url: (self.status.set('Private repository created with required human review.'), webbrowser.open(url)))
 
     def open_initial_pr(self):
         value, _ = scaffold.load_supported(self.project_path, self.repo)
-        files, token = scaffold.render(value, self.repo), self.github_token.get()
+        files = scaffold.render(value, self.repo)
+        try: token = self.repository_token(value['repository'])
+        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
         if not messagebox.askokcancel('Propose configuration', 'Push these configuration files and open a pull request in your customer repository for a designated human to review?'): return
         def ready(result):
             self.pull_number.set(str(result['number']))
             self.status.set('Have a designated human review and merge this PR, then prepare the deployment plan.')
             webbrowser.open(result['url'])
-        self.start(lambda: GitHub(token).propose(value, files, 'Create Nomiarch foundation',
+        self.start(lambda: GitHub(token, value['repository']).propose(value, files, 'Create Nomiarch foundation',
                     'Review the customer settings, versioned recipe and approval/network policies. This PR creates no cloud or VM resources. Deployment requires a separate exact-plan approval in Nomiarch Setup.'), ready)
 
     def repository_check(self):
         value, _ = scaffold.load_supported(self.project_path, self.repo)
-        if value['repository']['mode'] != 'github': return None
-        token, number = self.github_token.get(), int(self.pull_number.get())
-        client = GitHub(token)
+        if value['repository']['mode'] not in scaffold.REVIEW_MODES: return None
+        token, number = self.repository_token(value['repository']), int(self.pull_number.get())
+        client = GitHub(token, value['repository'])
         return lambda project, snapshot: client.approved(project, snapshot, number)
 
     def prepare_foundation(self):
@@ -260,13 +324,13 @@ class FoundationScreens:
             messagebox.showinfo('Customer configuration', 'This installation predates customer scaffolds. Its existing maintenance actions remain available.'); return
         self.managed_foundation = directory
         self.project_path = Path(run['foundation']['project_directory'])
+        value, _ = scaffold.load_supported(self.project_path, self.repo)
         self.clear('Observe and propose changes', 'Core evaluates measurements against your approved configuration. Proposed changes still need a human review and a separate deployment approval.')
         self.button('Check this environment with Core', self.observe_foundation, True)
         self.button('Propose the observed repair', self.propose_reconciliation)
         self.button('Review a proposed configuration folder', self.review_reconciliation)
-        row = ttk.Frame(self.content); row.pack(fill='x', pady=8)
-        ttk.Label(row, text='GitHub proposal token', width=24).pack(side='left')
-        ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+        if value['repository']['mode'] in scaffold.REVIEW_MODES:
+            self.repository_token_entry(value['repository'], 'GitHub proposal token')
         self.watch_enabled = tk.BooleanVar(value=False)
         ttk.Checkbutton(self.content, text='While this app is open, check every minute and open repair PRs',
                         variable=self.watch_enabled, command=self.toggle_foundation_watch).pack(anchor='w', pady=10)
@@ -279,8 +343,12 @@ class FoundationScreens:
 
     def observe_foundation(self):
         directory = Path(self.managed_foundation)
-        token = self.github_token.get()
-        repository_head = GitHub(token).main_head if token else None
+        try:
+            run = read_json(directory / 'run.json')
+            value, _ = scaffold.load_supported(run['foundation']['project_directory'], self.repo)
+            token = self.repository_token(value['repository']) if value['repository']['mode'] in scaffold.REVIEW_MODES else ''
+            repository_head = GitHub(token, value['repository']).main_head if token else None
+        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
         def task():
             run = read_json(directory / 'run.json')
             if run['config']['target'] == 'local': service.locate_multipass()
@@ -299,7 +367,7 @@ class FoundationScreens:
     def toggle_foundation_watch(self):
         if not self.watch_enabled.get(): return
         value, _ = scaffold.load_supported(self.project_path, self.repo)
-        if value['repository']['mode'] != 'github' or not self.github_token.get():
+        if value['repository']['mode'] not in scaffold.REVIEW_MODES or not self.github_token.get():
             self.watch_enabled.set(False)
             messagebox.showinfo('Repository needed', 'Automatic PR proposals require the configured customer GitHub repository and a proposal token. You can still run local checks manually.'); return
         self.observe_foundation()
@@ -317,15 +385,17 @@ class FoundationScreens:
             value = observe.proposed_project(self.managed_foundation, self.repo, report)
         except Exception as e: messagebox.showerror('Observe first', str(e)); return
         if not automatic and not messagebox.askokcancel('Propose a repair', 'Save this repair request and open a customer pull request if configured? No settings will be applied.'): return
-        token, directory = self.github_token.get(), Path(self.managed_foundation)
+        try: token = self.repository_token(value['repository']) if value['repository']['mode'] in scaffold.REVIEW_MODES else ''
+        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
+        directory = Path(self.managed_foundation)
         folder = self.root_dir / 'projects' / ('proposal-' + value['reconciliation']['observation_sha256'][:16])
         def task():
             if not folder.exists(): scaffold.create(folder, value, self.repo)
             existing, _ = scaffold.load_supported(folder, self.repo)
             if existing != value: raise NomiarchError('A different proposal already uses this folder')
             result = {'folder': str(folder)}
-            if value['repository']['mode'] == 'github':
-                result.update(GitHub(token).propose(value, scaffold.render(value, self.repo), 'Restore approved Nomiarch settings',
+            if value['repository']['mode'] in scaffold.REVIEW_MODES:
+                result.update(GitHub(token, value['repository']).propose(value, scaffold.render(value, self.repo), 'Restore approved Nomiarch settings',
                     'Core observed a difference in: ' + ', '.join(value['reconciliation']['checks']) + '.\n\nReview the evidence references and reconciliation request. This PR changes no approval policy and performs no deployment. After merge, prepare and approve a new plan in Nomiarch Setup.'))
             write_json(directory / 'pending-proposal.json', result)
             return result
@@ -345,12 +415,12 @@ class FoundationScreens:
         if not folder: return
         self.watch_enabled.set(False)
         self.project_path = Path(folder)
+        value, _ = scaffold.load_supported(folder, self.repo)
         if saved.get('number'): self.pull_number.set(str(saved['number']))
         self.clear('Review the repair request', 'After the customer PR is approved and merged, prepare a new plan. Nothing changes until you approve that plan.')
-        self.entry('Merged PR number', self.pull_number)
-        row = ttk.Frame(self.content); row.pack(fill='x', pady=8)
-        ttk.Label(row, text='GitHub approval-check token', width=24).pack(side='left')
-        ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+        if value['repository']['mode'] in scaffold.REVIEW_MODES:
+            self.entry('Merged PR number', self.pull_number)
+            self.repository_token_entry(value['repository'], 'Approval-check token')
         self.button('Open proposed configuration', lambda: service.open_folder(folder))
         def prepare():
             try: check = self.repository_check()
@@ -397,15 +467,14 @@ class FoundationScreens:
                    'This operation has its own request and approval. Preparing its plan does not change the system. Removal permanently deletes the selected VM and disks.' if action == 'destroy' else
                    'Review the selected release and operation before planning. An upgrade makes an encrypted backup before replacing the release.')
         self.button('Open the operation configuration', lambda: service.open_folder(pending['folder']))
-        if value['repository']['mode'] == 'github':
-            row = ttk.Frame(self.content); row.pack(fill='x', pady=8)
-            ttk.Label(row, text='GitHub token', width=24).pack(side='left')
-            ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+        if value['repository']['mode'] in scaffold.REVIEW_MODES:
+            self.repository_token_entry(value['repository'])
             def publish():
-                token = self.github_token.get()
+                try: token = self.repository_token(value['repository'])
+                except Exception as error: messagebox.showerror('Repository settings', str(error)); return
                 if not messagebox.askokcancel('Open operation PR', 'Open this specific operation request in the customer repository for human review?'): return
                 def task():
-                    pr = GitHub(token).propose(value, scaffold.render(value, self.repo), action.title() + ' Nomiarch installation',
+                    pr = GitHub(token, value['repository']).propose(value, scaffold.render(value, self.repo), action.title() + ' Nomiarch installation',
                         'Review this operation-specific request and the runtime pins. The earlier installation approval does not authorize this action. No infrastructure is changed by this PR; a separate exact-plan approval is required after merge.')
                     saved = dict(pending, **pr)
                     write_json(Path(self.managed_foundation) / 'pending-proposal.json', saved)

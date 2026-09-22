@@ -1,7 +1,7 @@
 name: Desktop wizard
 on:
   pull_request:
-    paths: ['nomiarch/**', 'desktop/**', 'tests/test_desktop.py', 'tests/test_foundation.py', '.github/workflows/desktop.yml']
+    paths: ['nomiarch/**', 'desktop/**', 'tests/test_desktop.py', 'tests/test_foundation.py', 'tests/test_internal_repository.py', 'tests/fixtures/**', '.github/workflows/desktop.yml']
   push:
     branches: [main]
     paths: ['nomiarch/desktop/**', 'nomiarch/foundation/**', 'desktop/**', '.github/workflows/desktop.yml']
@@ -11,6 +11,7 @@ jobs:
   build:
     outputs:
       release_ready: ${{ steps.release.outputs.ready }}
+      version: ${{ steps.release.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +42,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_desktop.py -v
           python -m unittest discover -s tests -p test_foundation.py -v
+          python -m unittest discover -s tests -p test_internal_repository.py -v
       - name: Package Microsoft Azure sign-in helper
         run: python -m PyInstaller --noconfirm --clean --onedir --console --name az --distpath cloud-tools --collect-all azure.cli.core --collect-all azure.cli.command_modules.util --collect-all azure.cli.command_modules.lab --collect-all azure.cli.command_modules.profile --collect-all azure.cli.command_modules.vm --collect-all azure.cli.command_modules.network --collect-all azure.cli.command_modules.privatedns --collect-all azure.cli.command_modules.resource --collect-submodules azure.mgmt.compute --collect-submodules azure.mgmt.resource --collect-submodules azure.mgmt.core --collect-submodules azure.mgmt.authorization --collect-all msal --copy-metadata azure-cli --copy-metadata azure-cli-core --copy-metadata azure-cli-telemetry desktop/azure_helper.py
       - name: Verify packaged Microsoft helper
@@ -53,8 +55,10 @@ jobs:
         run: |
           python - <<'PY'
           import os
-          from nomiarch.desktop.catalog import RELEASE_READY
-          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ready='+str(RELEASE_READY).lower()+'\n')
+          from nomiarch.desktop.catalog import RELEASE_READY, DESKTOP_VERSION
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('ready='+str(RELEASE_READY).lower()+'\n')
+              f.write('version='+DESKTOP_VERSION+'\n')
           PY
       - name: Package native desktop app
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra --add-data cloud-tools:cloud-tools desktop/launcher.py
@@ -121,20 +125,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
+          DESKTOP_VERSION: ${{ needs.build.outputs.version }}
         run: |
           cat > notes.md <<'EOF'
-          Graphical Nomiarch Setup 0.1.0.dev4 with customer scaffolds, explicit deployment-plan approval and a local/Azure destination choice. Installs the admitted Core 0.1.0.dev3.
+          Graphical Nomiarch Setup with internal GitHub Enterprise Server approvals, explicit deployment-plan approval and a local/Azure destination choice. Installs the admitted Core 0.1.0.dev3.
 
           Download the app for your computer and open it. The official Microsoft Azure CLI sign-in helper is included. Local setup guides VM support installation and verifies offline files. Azure setup requires a customer subscription and an existing privately routed subnet. Azure uses a pinned Terraform/OpenTofu scaffold; local lifecycle uses the explicit Multipass adapter.
 
-          Personal evaluation keeps a local approval record. Organisation GitHub setup requires a private customer repository, designated human reviewers and protected main. Core evaluates observations and proposes bounded repairs through the controller; it has no infrastructure credentials or apply capability. Upgrade, repair and removal have their own approval plans and organisation PRs. Internal/offline organisation repository deployment integration is not included yet. See https://nomiarch.com/docs/running/ for exact preview limits.
+          Personal evaluation keeps a local approval record. Organisation setup supports public GitHub or an existing internal GitHub Enterprise Server. The internal connection uses verified HTTPS, an optional administrator-supplied public CA certificate, and private addresses only. Tokens stay in memory and are scoped to the selected repository. Both integrations require private repositories, designated human reviewers and protected main. Disconnected sites can use internal review for installation, repair, upgrade and removal. Other repository products remain export-only.
+
+          Core evaluates observations and proposes bounded repairs through the controller; it has no infrastructure credentials or apply capability. Operations have their own exact plans and organisation PRs. Existing recipe 0.2.0 configurations remain supported; new configurations use recipe 0.3.0. Actual TLS and review protocol tests passed; customer GitHub Enterprise Server deployment qualification remains to be performed. See https://nomiarch.com/docs/running/ for the guide and exact preview limits.
 
           Windows preview: Windows 11 Pro/Enterprise/Education on Intel/AMD with Hyper-V. Windows Home and ARM Windows are not supported. Windows, macOS and Linux packages passed native controller and packaged-screen tests. End-to-end VM creation on customer desktops and physical air-gap testing remain unqualified.
 
           These are unsigned evaluation packages; Windows/macOS may warn or block them. No signing/notarization certificate has been provisioned. Do not disable operating-system protections. Use an approved evaluation environment if your organization permits unsigned software.
           EOF
-          if gh release view desktop-v0.1.0.dev4 >/dev/null 2>&1; then
+          tag="desktop-v$DESKTOP_VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
             echo 'This immutable preview release already exists; no assets were replaced.'
             exit 0
           fi
-          gh release create desktop-v0.1.0.dev4 downloads/* --target "$COMMIT" --prerelease --title 'Nomiarch Desktop Setup 0.1.0.dev4' --notes-file notes.md
+          gh release create "$tag" downloads/* --target "$COMMIT" --prerelease --title "Nomiarch Desktop Setup $DESKTOP_VERSION" --notes-file notes.md

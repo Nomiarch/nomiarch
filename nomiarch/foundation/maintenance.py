@@ -119,7 +119,7 @@ def apply(operation_directory, source, expected_digest, *, repository_check=None
             for artifact in record['artifacts'].values(): require(digest(artifact['path']) == artifact['sha256'], 'A release file changed after planning')
             admit(candidate, record['artifacts']['bundle']['path'], record['artifacts']['key']['path'])
         evidence = {'mode': 'local-human', 'time': time.time(), 'digest': expected_digest}
-        if candidate['repository']['mode'] == 'github':
+        if candidate['repository']['mode'] in scaffold.REVIEW_MODES:
             require(repository_check is not None, 'A current human-reviewed operation PR is required')
             evidence['repository'] = repository_check(candidate, snapshot)
         require(candidate['usage'] != 'organisation' or 'repository' in evidence, 'Organisation maintenance needs its own independent human approval')

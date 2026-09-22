@@ -4,42 +4,60 @@ No merge, review, deployment or policy-edit operation is exposed to the proposer
 The token is held by the controller, never written into a scaffold or sent to Core.
 """
 import base64
+import copy
 import hashlib
 import json
 import re
+import ssl
 import urllib.error
 import urllib.request
 
 from nomiarch.bootstrap.config import require
 from nomiarch.common import NomiarchError, canonical
 from . import scaffold
+from .repository_transport import PrivateHTTPSHandler, certificate_context
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        fp.close()
         raise NomiarchError('Repository redirect refused; confirm the current repository name')
 
 
 class GitHub:
-    def __init__(self, token):
-        require(isinstance(token, str) and 10 <= len(token) <= 512 and not any(c.isspace() for c in token), 'Enter a valid customer GitHub token')
+    def __init__(self, token, repository=None):
+        require(isinstance(token, str) and 10 <= len(token) <= 512 and all(33 <= ord(c) <= 126 for c in token), 'Enter a valid customer GitHub token')
         self.token = token
+        self.repository = copy.deepcopy(repository)
+        if repository is not None:
+            scaffold.validate_repository(repository, 'organisation', 'local-isolated')
+            require(repository['mode'] in scaffold.REVIEW_MODES, 'Choose a supported review repository')
+        internal = repository is not None and repository['mode'] == 'github-enterprise'
+        self.origin = repository['server_url'] if internal else 'https://github.com'
+        self.api = self.origin + '/api/v3' if internal else 'https://api.github.com'
+        context = certificate_context(repository.get('ca_certificate') if internal else None)
+        handler = PrivateHTTPSHandler(context=context) if internal else urllib.request.HTTPSHandler(context=context)
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), handler)
 
     def call(self, path, data=None, method=None):
-        require(path.startswith('/') and not path.startswith('//'), 'Invalid GitHub API path')
+        require(path.startswith('/') and not path.startswith('//') and not any(c in path for c in ('\\', '#', '\r', '\n')), 'Invalid GitHub API path')
         headers = {'Authorization': 'Bearer ' + self.token, 'Accept': 'application/vnd.github+json',
                    'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Nomiarch-Setup', 'Content-Type': 'application/json'}
-        req = urllib.request.Request('https://api.github.com' + path, data=canonical(data) if data is not None else None,
+        req = urllib.request.Request(self.api + path, data=canonical(data) if data is not None else None,
                                      headers=headers, method=method)
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         try:
-            with opener.open(req, timeout=45) as response:
+            with self.opener.open(req, timeout=45) as response:
                 raw = response.read(4 * 1024 * 1024 + 1)
                 require(len(raw) <= 4 * 1024 * 1024, 'Repository response is too large')
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
             # Server responses may echo credentials/input. Keep these out of UI logs.
+            e.close()
             raise NomiarchError(f'GitHub returned HTTP {e.code}. Check repository access, permissions and branch protection.') from None
+        except (urllib.error.URLError, OSError, ssl.SSLError):
+            raise NomiarchError('Cannot establish verified HTTPS to the repository. Check its address, private route and trusted public CA certificate.') from None
+        except (ValueError, UnicodeError):
+            raise NomiarchError('The repository returned an invalid response') from None
 
     def pages(self, path):
         values = []
@@ -50,10 +68,17 @@ class GitHub:
             if len(result) < 100: return values
         raise NomiarchError('Repository history exceeds this preview’s review limit')
 
-    @staticmethod
-    def root(value):
+    def root(self, value):
         r = value['repository']
+        require(r['mode'] in scaffold.REVIEW_MODES, 'This configuration has no supported review repository')
+        if self.repository is None:
+            require(r['mode'] == 'github', 'Reconnect using the internal repository settings before sending credentials')
+        else:
+            require(r == self.repository, 'Repository settings changed; reconnect and re-enter the token for this configuration')
         return '/repos/' + r['owner'] + '/' + r['name']
+
+    def repository_url(self, value):
+        return self.origin + self.root(value)[len('/repos'):]
 
     def protect(self, value):
         # Only the separate human setup flow calls this administration operation.
@@ -79,6 +104,7 @@ class GitHub:
 
     def create_repository(self, value):
         value = scaffold.validate_project(value)
+        self.root(value)
         r = value['repository']
         who = self.call('/user')
         path = '/user/repos' if who['login'].lower() == r['owner'].lower() else '/orgs/' + r['owner'] + '/repos'
@@ -89,7 +115,7 @@ class GitHub:
         if created['default_branch'] != 'main':
             self.call(self.root(value) + '/branches/' + created['default_branch'] + '/rename', {'new_name': 'main'})
         self.protect(value)
-        return created['html_url']
+        return self.repository_url(value)
 
     def propose(self, value, files, title, description):
         value = scaffold.validate_project(value)
@@ -119,7 +145,8 @@ class GitHub:
         self.call(root + '/git/refs', {'ref': 'refs/heads/' + branch, 'sha': created['sha']})
         pull = self.call(root + '/pulls', {'title': title, 'head': branch, 'base': 'main', 'body': description,
                                          'maintainer_can_modify': False})
-        return {'url': pull['html_url'], 'number': pull['number'], 'head': created['sha'], 'base': base}
+        require(type(pull.get('number')) is int and pull['number'] > 0, 'Invalid repository pull request number')
+        return {'url': self.repository_url(value) + '/pull/' + str(pull['number']), 'number': pull['number'], 'head': created['sha'], 'base': base}
 
     def approved(self, value, snapshot, number):
         require(type(number) is int and number > 0, 'Enter the reviewed pull request number')
@@ -155,4 +182,4 @@ class GitHub:
                     and login != pull['user']['login'].lower()]
         require(accepted, 'A designated human other than the proposer must approve the exact final PR commit')
         require(not any(r['state'] == 'CHANGES_REQUESTED' for login, r in latest.items() if login in allowed), 'A designated reviewer still requests changes')
-        return {'repository': root[len('/repos/'):], 'pull_request': number, 'head': head, 'merge': current, 'human_reviewers': sorted(accepted)}
+        return {'server': self.origin, 'repository': root[len('/repos/'):], 'pull_request': number, 'head': head, 'merge': current, 'human_reviewers': sorted(accepted)}

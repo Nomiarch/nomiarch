@@ -12,7 +12,8 @@ import uuid
 from nomiarch.bootstrap.config import keys, require, validate
 from nomiarch.common import NomiarchError, canonical, digest, read_json
 from nomiarch.desktop.catalog import CORE_VERSION, PINS
-from . import RECIPE_VERSION
+from . import RECIPE_VERSION, SUPPORTED_RECIPE_VERSIONS
+from .repository_transport import REVIEW_MODES, certificate_context, server_origin
 
 
 def slug(value, label):
@@ -25,7 +26,7 @@ def validate_project(value):
     value = copy.deepcopy(value)
     keys(value, {"schema", "id", "recipe_version", "organisation", "environment", "usage", "isolation", "repository", "configuration", "runtime", "reconciliation", "maintenance"}, "foundation")
     require(value.get("schema") == 1, "Unsupported foundation schema")
-    require(value.get("recipe_version") == RECIPE_VERSION, "This foundation needs its matching installer recipe version")
+    require(value.get("recipe_version") in SUPPORTED_RECIPE_VERSIONS, "This foundation needs its matching installer recipe version")
     require(isinstance(value.get("id"), str) and re.fullmatch(r"[0-9a-f]{32}", value["id"]), "Invalid foundation identity")
     slug(value.get("organisation"), "Organisation")
     slug(value.get("environment"), "Environment")
@@ -47,22 +48,7 @@ def validate_project(value):
     else:
         for field in ("ssh_key", "ssh_public_key"):
             require(details[field] == "@controller", "SSH key paths belong outside the customer repository")
-    repository = value.get("repository", {})
-    keys(repository, {"mode", "owner", "name", "approvers"}, "repository")
-    require(repository.get("mode") in {"local", "github", "offline"}, "Choose local records, GitHub or an offline repository export")
-    if value["usage"] == "organisation":
-        require(repository["mode"] in {"github", "offline"}, "Organisation setup requires a customer repository")
-    if value["isolation"] == "disconnected":
-        require(repository["mode"] != "github", "Disconnected operation needs an internal repository; choose offline export")
-    if repository["mode"] == "github":
-        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", repository.get("owner", ""))), "Invalid GitHub owner")
-        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", repository.get("name", ""))), "Invalid GitHub repository name")
-        approvers = repository.get("approvers", [])
-        require(isinstance(approvers, list) and 1 <= len(approvers) <= 10, "Enter at least one human GitHub approver")
-        require(all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", a) for a in approvers), "Invalid approver login")
-        require(len(set(a.lower() for a in approvers)) == len(approvers), "Approvers must be unique")
-    else:
-        require(set(repository) == {"mode"}, "Repository account settings are only used with GitHub")
+    validate_repository(value.get('repository', {}), value['usage'], value['isolation'], value['recipe_version'])
     if 'reconciliation' in value:
         change = value['reconciliation']
         keys(change, {'observation_sha256', 'configuration_sha256', 'checks'}, 'reconciliation')
@@ -77,6 +63,33 @@ def validate_project(value):
         require(isinstance(operation.get('id'), str) and re.fullmatch(r'[0-9a-f]{32}', operation['id']), 'Invalid maintenance identity')
         require(isinstance(operation.get('configuration_sha256'), str) and re.fullmatch(r'[0-9a-f]{64}', operation['configuration_sha256']), 'Invalid maintenance baseline')
     return value
+
+
+def validate_repository(repository, usage, isolation, recipe_version=RECIPE_VERSION):
+    keys(repository, {"mode", "owner", "name", "approvers", "server_url", "ca_certificate"}, "repository")
+    mode = repository.get('mode')
+    require(mode in {'local', 'offline'} | REVIEW_MODES, 'Choose local records, a supported repository or configuration export')
+    if usage == 'organisation':
+        require(mode in REVIEW_MODES | {'offline'}, 'Organisation setup requires a customer repository')
+    if isolation == 'disconnected':
+        require(mode != 'github', 'Disconnected operation requires an internal server or configuration export')
+    if mode in REVIEW_MODES:
+        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", repository.get("owner", ""))), "Invalid GitHub owner")
+        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", repository.get("name", ""))), "Invalid GitHub repository name")
+        approvers = repository.get("approvers", [])
+        require(isinstance(approvers, list) and 1 <= len(approvers) <= 10, "Enter at least one human GitHub approver")
+        require(all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", a) for a in approvers), "Invalid approver login")
+        require(len(set(a.lower() for a in approvers)) == len(approvers), "Approvers must be unique")
+        if mode == 'github-enterprise':
+            require(recipe_version != '0.2.0', 'Internal repository support requires recipe 0.3.0 or later')
+            require(repository.get('server_url') == server_origin(repository.get('server_url')), 'Use the canonical internal HTTPS server address')
+            if 'ca_certificate' in repository:
+                certificate_context(repository['ca_certificate'])
+        else:
+            require(not {'server_url', 'ca_certificate'} & set(repository), 'Public GitHub uses its fixed server and system certificate trust')
+    else:
+        require(set(repository) == {'mode'}, 'Repository account settings require a supported repository mode')
+    return repository
 
 
 def project(configuration, organisation, environment, usage="personal", isolation=None, repository=None):
@@ -145,8 +158,10 @@ def render(value, source):
                                               "image_sha256": config["local"]["image_sha256"],
                                               "isolation": value["isolation"]})
     repo_mode = value["repository"]["mode"]
-    if repo_mode == "github":
+    if repo_mode in REVIEW_MODES:
         files[".github/CODEOWNERS"] = "* " + " ".join("@" + a for a in value["repository"]["approvers"]) + "\n"
+    if repo_mode == 'github-enterprise' and 'ca_certificate' in value['repository']:
+        files['trust/repository-ca.crt'] = value['repository']['ca_certificate']
     if 'reconciliation' in value:
         files['requests/reconcile.json'] = json_text(value['reconciliation'])
     if 'maintenance' in value:
@@ -154,7 +169,7 @@ def render(value, source):
     files["README.md"] = f'''# {value['organisation']} / {value['environment']}
 
 This is your Nomiarch foundation configuration. You own this repository and the
-environment. Recipe {RECIPE_VERSION}; destination: {target}; mode: {value['isolation']}.
+environment. Recipe {value['recipe_version']}; destination: {target}; mode: {value['isolation']}.
 
 Open Nomiarch Setup to review the configuration and prepare a deployment plan.
 The plan creates no infrastructure. Approve the displayed plan to deploy it.
@@ -180,6 +195,14 @@ inside the approved boundary, and admit updates through your transfer process.
 
 This scaffold is not a claim of certification, production qualification or automatic
 cloud disaster recovery. Test your actual host, network, permissions and recovery path.
+'''
+    if repo_mode == 'github-enterprise':
+        files['README.md'] += f'''\nInternal GitHub Enterprise Server: {value['repository']['server_url']}\n
+The controller connects directly over verified HTTPS to private network addresses.
+An optional public CA certificate is part of the reviewed configuration; tokens
+and private keys remain outside Git. The same protected-main, final-commit human
+review and separate deployment-plan approval apply to every operation.
+The site must provide the server, internal DNS and the disconnected boundary.
 '''
     return files
 

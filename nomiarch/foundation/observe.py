@@ -92,7 +92,7 @@ def inspect(directory, source, *, repository_head=None, factory=get_provider):
     desired = dict(value['configuration']['capacity'], outbound_blocked=True, core_version=value['runtime']['core_version'])
     observed['core_version'] = value['runtime']['core_version']  # Replaced with the actual version inside Core.
     checked_repository = False
-    if value['repository']['mode'] == 'github' and repository_head is not None:
+    if value['repository']['mode'] in scaffold.REVIEW_MODES and repository_head is not None:
         require(run['foundation'].get('repository_commit'), 'No approved repository revision was recorded')
         desired['repository_head'] = run['foundation']['repository_commit']
         observed['repository_head'] = repository_head(value)

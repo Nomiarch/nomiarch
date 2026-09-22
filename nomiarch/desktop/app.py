@@ -344,8 +344,28 @@ def main():
             from PIL import ImageGrab
             app=App(folder)
             output=Path(sys.argv[sys.argv.index('--self-test')+1])
+            def internal_repository():
+                from nomiarch.common import canonical
+                from unittest.mock import patch
+                app.repo_mode.set('github-enterprise'); app.usage.set('organisation'); app.isolation.set('disconnected')
+                app.server_url.set('https://git.company.internal'); app.repo_owner.set('customer'); app.approvers.set('reviewer')
+                app.github_screen()
+                app.github_token.set('temporary-test-token')
+                with patch.object(app, 'prerequisites') as next_step:
+                    app.repository_continue(); next_step.assert_called_once()
+                settings = app.repository_settings()
+                assert app.token_scope == canonical(settings)
+                assert app.repository_token(settings) == 'temporary-test-token'
+                app.server_url.set('https://another.internal')
+                assert app.github_token.get() == ''
+                app.server_url.set('https://git.company.internal')
+                app.github_token.set('temporary-test-token')
+                app.clear('Resume internal configuration', 'The token is scoped to the selected server and repository.')
+                app.repository_token_entry(dict(settings, name='another-project'))
+                assert app.github_token.get() == ''
+                app.github_screen()
             screens=[('home',app.home),('customer',lambda:app.customer('local')),('repository',app.repository_screen),
-                     ('github',app.github_screen),('azure',app.cloud_screen),('files',app.download_screen),('capacity',app.review),('manage',app.manage)]
+                     ('github',app.github_screen),('internal-repository',internal_repository),('azure',app.cloud_screen),('files',app.download_screen),('capacity',app.review),('manage',app.manage)]
             for name,screen in screens:
                 screen();app.update()
                 app.set_buttons(True);app.set_buttons(False);app.update()

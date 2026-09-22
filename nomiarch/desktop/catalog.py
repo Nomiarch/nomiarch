@@ -1,5 +1,5 @@
-"""Reviewed download pins. Desktop 0.1.0.dev4 installs the tested Core dev3."""
-DESKTOP_VERSION = '0.1.0.dev4'
+"""Reviewed download pins. Desktop 0.1.0.dev5 installs the tested Core dev3."""
+DESKTOP_VERSION = '0.1.0.dev5'
 RELEASE_READY = True  # Published Core artifacts passed both architecture gates.
 CORE_VERSION = '0.1.0.dev3'
 BASE = 'https://github.com/Nomiarch/nomiarch/releases/download/v0.1.0.dev3/'
