@@ -43,7 +43,8 @@ and inference are separate steps; take local copies before disconnecting the mac
 On a connected staging machine install Python 3.11+, Git, OpenSSL, and Docker with the
 daemon running. Docker must support the selected Linux CPU architecture. This is the
 only release-building step that downloads dependencies. The guest installer does not
-invoke a package repository, registry, or model hub.
+download from package repositories, public registries, or model hubs. Missing container
+images fail at an unavailable loopback mirror.
 
 Generate a release signing key in a private directory:
 
@@ -138,6 +139,11 @@ permission. Nomiarch does not register providers, grant roles, or modify a share
 az login
 az account show --output table
 ```
+
+The wizard needs an SSH key pair. If you do not already have one for the lab, create it
+with `ssh-keygen -t ed25519 -f ~/.ssh/nomiarch-lab` and select that private key and its
+`.pub` file in the wizard. For a passphrase-protected key, load it into your SSH agent
+with `ssh-add ~/.ssh/nomiarch-lab` before a full core test.
 
 List available Ubuntu 24.04 image versions in your selected subscription/region:
 

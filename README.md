@@ -3,9 +3,10 @@
 Private AI and infrastructure automation designed for air-gapped and cloud environments.
 
 **Current build: `0.1.0.dev1` — an engineering preview of the bootstrap and portable core.**
-This repository contains executable software and deployment recipes. It is not yet a qualified
-v0.1.0 release: Azure provisioning, the complete guest installation, and a disconnected restore
-must pass the target acceptance matrix before release. See [validation status](docs/validation.md).
+This repository contains executable software and deployment recipes. Ubuntu guest installation,
+repair, upgrade, and encrypted recovery of application state have passed integration testing.
+Actual Azure provisioning, local hypervisor combinations, and disconnected clean-host restore
+remain release gates. See [validation status](docs/validation.md).
 
 ## Try it locally first
 
