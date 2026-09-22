@@ -75,11 +75,20 @@ def inspect(archive_path, public_key, extract_to=None):
             raise NomiarchError("Oversized signature metadata")
         raw = archive.extractfile(index["manifest.json"]).read()
         sig = archive.extractfile(index["manifest.sig"]).read()
-        with tempfile.TemporaryDirectory(prefix="nomiarch-verify-") as tmp:
-            p = Path(tmp)
-            (p / "manifest").write_bytes(raw)
-            (p / "sig").write_bytes(sig)
-            Runner().run(["openssl", "dgst", "-sha256", "-verify", public_key, "-signature", p / "sig", p / "manifest"])
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+            from cryptography.exceptions import InvalidSignature
+        except ImportError:
+            serialization = None
+        if serialization is not None:
+            try:
+                key = serialization.load_pem_public_key(Path(public_key).read_bytes())
+                key.verify(sig, raw, padding.PKCS1v15(), hashes.SHA256())
+            except (InvalidSignature, ValueError, TypeError) as e:
+                raise NomiarchError("Release signature is invalid or the public key is unsupported") from e
+        else:
+            verify_openssl(raw, sig, public_key)
         manifest = json.loads(raw)
         if (manifest.get("schema") != 1 or manifest.get("architecture") not in {"amd64", "arm64"}
                 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[.a-z0-9-]+)?", manifest.get("version", ""))):
@@ -114,6 +123,14 @@ def inspect(archive_path, public_key, extract_to=None):
                     raise NomiarchError("Artifact changed during extraction: " + name)
         manifest["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
         return manifest
+
+
+def verify_openssl(raw, sig, public_key):
+    with tempfile.TemporaryDirectory(prefix="nomiarch-verify-") as tmp:
+        p = Path(tmp)
+        (p / "manifest").write_bytes(raw)
+        (p / "sig").write_bytes(sig)
+        Runner().run(["openssl", "dgst", "-sha256", "-verify", public_key, "-signature", p / "sig", p / "manifest"])
 
 
 @contextmanager

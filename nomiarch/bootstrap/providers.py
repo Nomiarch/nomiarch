@@ -30,7 +30,7 @@ class Local(Provider):
 
     def provision(self):
         capacity = self.config["capacity"]
-        self.command(["multipass", "launch", "file://" + self.config["local"]["image"],
+        self.command(["multipass", "launch", Path(self.config["local"]["image"]).as_uri(),
                       "--name", self.run["prefix"], "--cpus", capacity["cpus"],
                       "--memory", str(capacity["memory_gib"]) + "G", "--disk", str(capacity["disk_gib"]) + "G"], timeout=1800)
         return {"host": self.run["prefix"], "mode": "local-restricted", "data_device": None}

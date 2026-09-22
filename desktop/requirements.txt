@@ -1,0 +1,4 @@
+pyinstaller==6.16.0
+cryptography==45.0.7
+bech32==1.2.0
+pillow==11.3.0
