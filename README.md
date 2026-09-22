@@ -2,11 +2,17 @@
 
 Private AI and infrastructure automation designed for air-gapped and cloud environments.
 
-**Current build: `0.1.0.dev1` — an engineering preview of the bootstrap and portable core.**
+**Current build: `0.1.0.dev2` — an engineering preview of the bootstrap and portable core.**
 This repository contains executable software and deployment recipes. Ubuntu guest installation,
 repair, upgrade, and encrypted recovery of application state have passed integration testing.
 Actual Azure provisioning, local hypervisor combinations, and disconnected clean-host restore
 remain release gates. See [validation status](docs/validation.md).
+
+## Customer VM installation
+
+Follow [the customer guide](docs/customer-guide.md) for downloads, offline installation,
+verification and upgrades through the same terminal wizard. Published preview assets are
+available only after the release build gates pass.
 
 ## Try it locally first
 
@@ -26,6 +32,18 @@ labelled **deterministic development adapter**; it does not claim to run a model
 The same test can use a real local model with `--model-url http://127.0.0.1:8080`.
 
 **[Full local and Azure test guide →](docs/testing.md)**
+
+For a guided **full local VM installation**, run:
+
+```bash
+python3 -m nomiarch bootstrap wizard
+```
+
+Have Multipass, OpenSSL, a signed offline bundle, its separately trusted public key,
+and a matching Ubuntu 24.04 cloud image plus trusted checksum ready first. The wizard
+verifies the inputs, collects VM settings and installs Core with the real bundled model.
+It keeps the VM by default and offers deletion after testing. See the full guide for
+bundle preparation and air-gap prerequisites; the wizard does not create physical isolation.
 
 ## What this build implements
 

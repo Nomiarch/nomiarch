@@ -225,6 +225,14 @@ def dispatch(args):
         if run["cleanup"].get("status") == "deleted" or not run.get("inventory"):
             raise NomiarchError("This run has no retained provisioned host")
         provider = get_provider(run["config"], run, directory, Runner(log_dir=directory / "logs"), args.repo)
+        if args.action == "verify":
+            # Use the already admitted application inside each guest container.
+            command = ["sudo", "-n", "/usr/local/bin/k3s", "kubectl", "-n", "nomiarch", "exec"]
+            core = json.loads(provider.remote(command + ["deployment/core", "--", "python3", "-m", "nomiarch.smoke"], timeout=180))
+            boundary = json.loads(provider.remote(command + ["deployment/worker", "--", "python3", "-m", "nomiarch.smoke", "--boundary"], timeout=60))
+            result = {"validation": {"status": "passed", "checks": {"core": core, "worker_boundary": boundary}}, "run_directory": str(directory)}
+            write_json(directory / "verification.json", result)
+            return result
         if args.action == "backup":
             return backup_remote(provider, directory, run, args.backup_recipient)
         # Admission errors must be reported before quiescing or snapshotting the

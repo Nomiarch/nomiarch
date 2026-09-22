@@ -77,6 +77,11 @@ def parser():
     p.add_argument("--bundle", required=True)
     p.add_argument("--trusted-key", required=True)
     boot = sub.add_parser("bootstrap").add_subparsers(dest="action", required=True)
+    p = boot.add_parser("wizard", help="Guided installation, upgrade, repair, verification and backup")
+    p.add_argument("--action", choices=["install", "upgrade", "repair", "verify", "backup", "status"])
+    p.add_argument("--output", default="env.local.json")
+    p.add_argument("--state-dir", default=".nomiarch")
+    p.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
     p = boot.add_parser("init", help="Ask for environment variables and write configuration")
     p.add_argument("--target", choices=["local", "azure", "existing"], required=True)
     p.add_argument("--output", required=True)
@@ -94,7 +99,7 @@ def parser():
             p.add_argument("--trusted-key")
             p.add_argument("--destroy-after", action="store_true", default=None)
             p.add_argument("--unattended", action="store_true", help="Requires a fresh heartbeat from an independent cleanup controller")
-    for name in ("status", "destroy", "install", "repair", "upgrade", "backup"):
+    for name in ("status", "destroy", "install", "repair", "upgrade", "backup", "verify"):
         p = boot.add_parser(name)
         p.add_argument("--run", required=True, help="Exact run directory printed by apply")
         p.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
@@ -162,7 +167,10 @@ def main(argv=None):
             else:
                 value = recovery.restore(args.archive, args.destination, args.identity, args.sha256)
         elif args.group == "bootstrap":
-            if args.action == "init":
+            if args.action == "wizard":
+                from nomiarch.bootstrap.wizard import run
+                value = run(args.output, args.state_dir, args.repo, args.action)
+            elif args.action == "init":
                 wizard(args.target, args.output)
             else:
                 from nomiarch.bootstrap.controller import dispatch
@@ -177,7 +185,7 @@ def main(argv=None):
         if isinstance(value, dict) and value.get("backup_export_error"):
             return 1
         return 0
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print("Interrupted. Inspect the retained run report and cleanup status.", file=sys.stderr)
         return 130
     except (NomiarchError, OSError, ValueError, KeyError) as e:

@@ -97,6 +97,30 @@ the compatibility combinations remain unqualified until tested on the actual hos
 
 ## 3. Full local VM
 
+### Guided installation
+
+Run `python3 -m nomiarch bootstrap wizard` for a terminal wizard that verifies the
+signed bundle, checks your Ubuntu image against a trusted SHA-256 receipt, collects
+VM capacity and retention choices, then installs and tests the full core after review.
+It keeps the VM by default. Use `--output env.second.json` for a separate configuration.
+Cancellation at review creates no VM. Installation failures retain their run report;
+use the recorded run directory for status, repair or scoped removal.
+
+Before starting, install Python 3.11+, OpenSSL and Multipass on the host. Bring the
+repository, signed bundle, separately enrolled release public key, Ubuntu 24.04 cloud
+image and trusted image checksum into the environment. Bundle preparation is described
+above; the wizard does not build or download these artifacts. The bundle and image must
+match the local host architecture. macOS/Linux are the initial wizard host paths;
+Windows/WSL host-to-Multipass integration is not qualified.
+
+The wizard uses the existing offline guest installer and real bundled model. It does
+not disconnect host networking or certify physical isolation. For an air-gap test,
+use an isolated host and management boundary with all prerequisites prepositioned.
+Actual Multipass host combinations and fully disconnected installation remain release
+gates; wizard tests cover orchestration and rejection before provisioning.
+
+### Individual commands
+
 Install Multipass on the host. Obtain an Ubuntu 24.04 cloud image for the chosen architecture,
 verify it against the publisher's signed checksum information, and retain it locally.
 See [Ubuntu's cloud image distribution](https://cloud-images.ubuntu.com/noble/) and
