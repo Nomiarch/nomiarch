@@ -1,0 +1,54 @@
+{
+  "evidence_checkpoint": "79fc8721d791919f3ddbbaf55bee2cec74d64cfeb51985ebcecb92e26b87e177",
+  "forbidden_tool": "denied",
+  "health": {
+    "mode": "development-local-model",
+    "status": "ready",
+    "version": "0.1.0.dev1"
+  },
+  "profile": "development; no VM isolation or real-model proof unless --model-url is supplied",
+  "task": {
+    "attempts": 1,
+    "created": 1790095586.264902,
+    "id": "f0169c2b-34be-4c81-ac18-096c37145f03",
+    "result": {
+      "explanation": {
+        "mode": "local-model",
+        "summary": "Disable anonymous/public access, require HTTPS, enable encryption at rest."
+      },
+      "findings": [
+        {
+          "control": "public_access",
+          "expected": false,
+          "observed": true,
+          "recommendation": "Disable anonymous/public access",
+          "status": "fail"
+        },
+        {
+          "control": "https_only",
+          "expected": true,
+          "observed": false,
+          "recommendation": "Require HTTPS",
+          "status": "fail"
+        },
+        {
+          "control": "encryption_enabled",
+          "expected": true,
+          "observed": true,
+          "recommendation": "Enable encryption at rest",
+          "status": "pass"
+        }
+      ],
+      "scope": "submitted configuration only"
+    },
+    "status": "completed"
+  },
+  "unauthenticated_request": "denied",
+  "runtime_evidence": {
+    "scope": "Local development processes; no VM or network isolation qualification",
+    "model": "Qwen2.5-0.5B-Instruct-Q4_K_M",
+    "model_sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+    "llama_cpp_revision": "b29c606e28a01b1bc8c1351026a0fa6e616bf6c4",
+    "llama_cpp_tag": "v0.4.1"
+  }
+}

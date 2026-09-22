@@ -9,6 +9,7 @@ This is `0.1.0.dev1`, an engineering preview. “Implemented” describes code p
 | --- | --- |
 | Python compilation and CLI invocation | Passed in the development workspace |
 | Separate local API/gateway/worker processes and sample workflow | Passed with the deterministic development adapter |
+| Real local GGUF inference through the gateway | Passed with Qwen2.5 0.5B Q4_K_M and llama.cpp v0.4.1; [captured result](evidence/local-model.json) |
 | Authentication, task persistence/restart, idempotency, expired leases | Passed in behavioral tests |
 | Denied foundation tool and fail-closed policy/evidence failures | Passed in API/policy tests |
 | RSA bundle admission, untrusted signer, modified/missing/unsafe artifacts | Passed in artifact tests using synthetic payloads |
@@ -19,14 +20,17 @@ This is `0.1.0.dev1`, an engineering preview. “Implemented” describes code p
 | Rego policy | Passed using OPA 1.20.2 |
 | Azure HCL formatting | Passed using OpenTofu 1.12.6 |
 | Azure provider initialization | Passed; AzureRM 4.49.0 signature verified and lock recorded |
-| Azure provider schema validation | CI check configured; workspace blocks the provider's Unix listening socket |
-| Complete Docker release build and Ubuntu/K3s guest install | Requires target validation |
+| Azure provider schema validation | Passed in GitHub Actions with AzureRM 4.49.0; [run](https://github.com/Nomiarch/nomiarch/actions/runs/35756385285) |
+| Complete signed Docker release build | Passed in the Ubuntu integration job |
+| Ubuntu/K3s guest install and repair | Integration test in progress; initial run exposed a node-registration race that is being corrected |
 | Actual Multipass create/install/reboot/destroy | Requires target validation |
 | Actual Azure create/install/destroy and failure cleanup | Requires an authorized Azure lab; not executed by the initial implementation session |
 | Physical air-gap installation and clean-host appliance restore | Requires target validation |
 
 The workflow in `.github/workflows/ci.yml` runs behavioral tests, real encrypted recovery,
 local process integration, OPA tests, and Azure provider validation on Ubuntu 24.04.
+The separate guest workflow builds the complete bundle and tests install/repair on a
+disposable Ubuntu runner. That runner remains a connected administration host.
 Inspect the workflow result for the exact commit you test. A CI pass does not prove a
 physical air gap or live Azure provisioning.
 

@@ -17,7 +17,26 @@ AGE = "/usr/local/bin/nomiarch-age"
 
 
 def kubectl(runner, *args, **kwargs):
-    return runner.run([K3S, "kubectl", *args], **kwargs)
+    return runner.run([K3S, "kubectl", "--kubeconfig=/etc/rancher/k3s/k3s.yaml", *args], **kwargs)
+
+
+def wait_for_cluster(runner, timeout=300):
+    deadline = time.monotonic() + timeout
+    last = "node has not registered"
+    while time.monotonic() < deadline:
+        try:
+            node = json.loads(kubectl(runner, "get", "node", "nomiarch", "-o", "json", timeout=20))
+            ready = any(c["type"] == "Ready" and c["status"] == "True" for c in node.get("status", {}).get("conditions", []))
+            if ready:
+                # Wait until the packaged DNS addon has created its resources
+                # before replacing its default forwarding configuration.
+                kubectl(runner, "-n", "kube-system", "get", "deployment", "coredns", "-o", "name", timeout=20)
+                kubectl(runner, "-n", "kube-system", "get", "configmap", "coredns", "-o", "name", timeout=20)
+                return
+        except NomiarchError as e:
+            last = str(e)
+        time.sleep(2)
+    raise NomiarchError("K3s node/DNS registration did not become ready: " + last)
 
 
 def preflight(manifest):
@@ -140,16 +159,18 @@ def install(bundle_path, trusted_key, action="install", device=None, recipient=N
                          "secrets-encryption: true\ndisable-default-registry-endpoint: true\n"
                          "resolv-conf: /etc/nomiarch/resolv.conf\n"
                          "disable:\n  - traefik\n  - servicelb\n  - local-storage\n  - metrics-server\n")
-            runner.run(["sh", release / "install-k3s.sh"], env=dict(os.environ, INSTALL_K3S_SKIP_DOWNLOAD="true", INSTALL_K3S_SKIP_SELINUX_RPM="true"), timeout=600)
+            runner.run(["sh", release / "install-k3s.sh"], env={"PATH": "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                       "INSTALL_K3S_SKIP_DOWNLOAD": "true", "INSTALL_K3S_SKIP_SELINUX_RPM": "true", "INSTALL_K3S_EXEC": "server"}, timeout=600)
             # A same-version reinstall still needs image import and model refresh.
             runner.run(["systemctl", "restart", "k3s"], timeout=300)
-            kubectl(runner, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s", timeout=330)
+            wait_for_cluster(runner)
             write_json(ROOT / "dns.json", dns_config())
             kubectl(runner, "apply", "-f", ROOT / "dns.json")
             manifest["policy"] = (release / "tools.rego").read_text()
             write_json(ROOT / "runtime.json", render(manifest, identities))
             kubectl(runner, "apply", "-f", ROOT / "runtime.json")
             kubectl(runner, "-n", "kube-system", "rollout", "restart", "deployment/coredns")
+            kubectl(runner, "-n", "kube-system", "rollout", "status", "deployment/coredns", "--timeout=180s", timeout=210)
             kubectl(runner, "-n", "nomiarch", "rollout", "restart", "deployment/core", "deployment/broker", "deployment/model", "deployment/worker")
             for name in ("core", "broker", "model", "worker"):
                 kubectl(runner, "-n", "nomiarch", "rollout", "status", "deployment/" + name, "--timeout=600s", timeout=630)
@@ -177,7 +198,7 @@ RequiresMountsFor=/var/lib/nomiarch
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/k3s kubectl apply -f /var/lib/nomiarch/dns.json
+ExecStart=/usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml apply -f /var/lib/nomiarch/dns.json
 Restart=on-failure
 RestartSec=5
 [Install]
@@ -189,7 +210,7 @@ After=k3s.service nomiarch-dns.service
 Requires=k3s.service
 RequiresMountsFor=/var/lib/nomiarch
 [Service]
-ExecStart=/usr/local/bin/k3s kubectl -n nomiarch port-forward --address=127.0.0.1 service/core 8787:8787
+ExecStart=/usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml -n nomiarch port-forward --address=127.0.0.1 service/core 8787:8787
 Restart=always
 RestartSec=3
 [Install]
