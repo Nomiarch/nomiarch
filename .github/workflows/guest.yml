@@ -34,6 +34,8 @@ jobs:
       - name: Verify repair of the same signed release
         run: |
           sudo python3 -m nomiarch host repair --bundle "$GITHUB_WORKSPACE/.nomiarch/release.tar" --trusted-key "$GITHUB_WORKSPACE/.nomiarch/keys/public.pem"
+      - name: Upgrade and encrypted appliance recovery drill
+        run: sudo python3 scripts/guest_recovery_test.py
       - name: Diagnostics
         if: failure()
         run: |
@@ -42,3 +44,4 @@ jobs:
           sudo k3s kubectl -n nomiarch get events --sort-by=.lastTimestamp || true
           sudo k3s kubectl -n nomiarch logs deployment/broker --all-containers --tail=60 || true
           sudo k3s kubectl -n nomiarch logs deployment/model --tail=60 || true
+          sudo k3s kubectl -n kube-system logs deployment/coredns --tail=60 || true

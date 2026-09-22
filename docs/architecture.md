@@ -68,6 +68,9 @@ the current token/network scheme is not a multi-tenant or multi-host security cl
 The chained evidence log detects changes relative to a trusted retained checkpoint. A host
 administrator can replace the database and regenerate the chain, so it is not independently
 immutable evidence. Export checkpoints outside the host when evaluating stronger assurance.
+The local database uses ordinary filesystem storage. Host/volume encryption must be
+provided by the surrounding platform before customer data is admitted; this preview does
+not configure local full-disk encryption.
 
 ## Lifecycle and cleanup
 
@@ -104,6 +107,9 @@ Application network policies deny new connections except named service and inter
 paths. CoreDNS has no external forwarding, and its boot configuration does not inherit a
 connected host's external resolver. Workload images use `imagePullPolicy: Never`. Installation
 must fail on missing bytes rather than reconnect to finish downloading.
+After initial DNS admission, a K3s `coredns.yaml.skip` file preserves these existing addon
+resources and prevents restart from restoring the packaged forwarding configuration.
+CoreDNS/K3s version changes therefore require a separately qualified migration.
 
 Backups preserve the active application release and core state, not arbitrary VM/OS state.
 The reference restore reconstructs the runtime on a fresh admitted guest. The installed
@@ -114,6 +120,7 @@ clean-host restore, and dual-target parity evidence.
 ## Sources used for the implementation
 
 - [K3s offline installation and upgrade](https://docs.k3s.io/installation/airgap)
+- [K3s packaged-component ownership and skip files](https://docs.k3s.io/installation/packaged-components)
 - [Multipass image launch](https://canonical.com/multipass/docs/latest/reference/command-line-interface/launch/)
 - [AzureRM 4.49.0 Linux VM documentation](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.49.0/website/docs/r/linux_virtual_machine.html.markdown)
 - [AzureRM 4.49.0 subnet documentation](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.49.0/website/docs/r/subnet.html.markdown)

@@ -36,6 +36,8 @@ def smoke(url, token, *, real_model=False):
         raise NomiarchError("Configuration findings were incorrect")
     if real_model and result["explanation"]["mode"] != "local-model":
         raise NomiarchError("The real-model acceptance test used a development adapter")
+    if not isinstance(result["explanation"].get("summary"), str) or not result["explanation"]["summary"].strip():
+        raise NomiarchError("The explanation service returned no usable text")
     evidence = request(url + "/v1/evidence", token=token)
     return {"health": health, "task": task, "evidence_checkpoint": evidence["checkpoint"],
             "unauthenticated_request": "denied"}

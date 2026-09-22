@@ -22,7 +22,8 @@ This is `0.1.0.dev1`, an engineering preview. “Implemented” describes code p
 | Azure provider initialization | Passed; AzureRM 4.49.0 signature verified and lock recorded |
 | Azure provider schema validation | Passed in GitHub Actions with AzureRM 4.49.0; [run](https://github.com/Nomiarch/nomiarch/actions/runs/35756385285) |
 | Complete signed Docker release build | Passed in the Ubuntu integration job |
-| Ubuntu/K3s guest install and repair | Integration test in progress; initial run exposed a node-registration race that is being corrected |
+| Ubuntu/K3s guest installation | Passed in the Ubuntu integration job with real model and worker egress probes |
+| Repair, upgrade, and appliance recovery payload | Integration test in progress; repair exposed packaged DNS reconciliation on restart, now addressed using K3s skip-file support |
 | Actual Multipass create/install/reboot/destroy | Requires target validation |
 | Actual Azure create/install/destroy and failure cleanup | Requires an authorized Azure lab; not executed by the initial implementation session |
 | Physical air-gap installation and clean-host appliance restore | Requires target validation |

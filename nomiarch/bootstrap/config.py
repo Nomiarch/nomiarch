@@ -1,6 +1,7 @@
 import ipaddress
 from pathlib import Path
 import re
+import uuid
 
 from nomiarch.common import NomiarchError, digest, read_json
 
@@ -52,7 +53,10 @@ def validate(config):
             require(isinstance(details.get("known_hosts"), str), "existing.known_hosts is required; enroll the host out of band")
         else:
             keys(details, {"subscription_id", "location", "vm_size", "ssh_user", "ssh_key", "ssh_public_key", "admin_cidr", "subnet_id", "image", "vnet_cidr", "subnet_cidr"}, "azure")
-            require(bool(re.fullmatch(r"[0-9a-fA-F-]{36}", details.get("subscription_id", ""))), "Azure subscription UUID is required")
+            try:
+                uuid.UUID(details.get("subscription_id", ""))
+            except (ValueError, AttributeError):
+                raise NomiarchError("A valid Azure subscription UUID is required")
             require(config["architecture"] == "amd64", "Azure reference recipe currently supports amd64 only")
             require(bool(re.fullmatch(r"[a-z0-9]+", details.get("location", ""))), "Azure location is required")
             require(bool(re.fullmatch(r"Standard_[A-Za-z0-9_]+", details.get("vm_size", ""))), "An explicit Azure vm_size is required")
@@ -62,7 +66,7 @@ def validate(config):
             image = details.get("image", {})
             keys(image, {"publisher", "offer", "sku", "version"}, "azure.image")
             require(all(isinstance(image.get(k), str) and re.fullmatch(r"[A-Za-z0-9._-]+", image[k]) for k in ("publisher", "offer", "sku", "version")), "Azure image publisher/offer/sku/exact version are required")
-            require(image["version"] != "latest", "Resolve an exact Azure image version before applying")
+            require(bool(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", image["version"])), "Resolve an exact numeric Azure image version before applying")
             if details.get("subnet_id"):
                 require(bool(re.fullmatch(r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft.Network/virtualNetworks/[^/]+/subnets/[^/]+", details["subnet_id"])), "Invalid adopted subnet resource ID")
             else:

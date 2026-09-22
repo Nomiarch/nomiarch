@@ -62,6 +62,7 @@ def cleanup(directory, run, repo, *, factory=get_provider):
 
 
 def install_remote(provider, directory, run, archive, key, action="install", recipient=None):
+    run.pop("backup_export_error", None)
     with bundle.verified(archive, key) as (release, manifest):
         if manifest["architecture"] != run["config"]["architecture"]:
             raise NomiarchError("Bundle and environment architectures differ")
@@ -213,7 +214,7 @@ def dispatch(args):
         raise NomiarchError("Run identity mismatch")
     validate(run["config"])
     if args.action == "status":
-        return run
+        return {"observation": "last recorded controller state; not a fresh cloud/guest health query", **run}
     with file_lock(directory / "controller.lock", blocking=False):
         run = read_json(directory / "run.json")
         if args.action == "destroy":
@@ -226,11 +227,24 @@ def dispatch(args):
         provider = get_provider(run["config"], run, directory, Runner(log_dir=directory / "logs"), args.repo)
         if args.action == "backup":
             return backup_remote(provider, directory, run, args.backup_recipient)
+        # Admission errors must be reported before quiescing or snapshotting the
+        # retained appliance for an upgrade.
+        candidate = bundle.inspect(args.bundle, args.trusted_key)
+        if candidate["architecture"] != run["config"]["architecture"]:
+            raise NomiarchError("Bundle architecture does not match the retained host")
         if args.action == "upgrade":
             # A controller copy must exist before changing the installed release.
             run["pre_upgrade_backup"] = backup_remote(provider, directory, run, args.backup_recipient)
             save(directory, run)
-        result = install_remote(provider, directory, run, args.bundle, args.trusted_key, args.action, getattr(args, "backup_recipient", None))
+        run["phase"] = args.action + "-running"
+        save(directory, run)
+        try:
+            result = install_remote(provider, directory, run, args.bundle, args.trusted_key, args.action, getattr(args, "backup_recipient", None))
+        except BaseException as e:
+            run["phase"] = args.action + "-failed"
+            run["validation"] = {"status": "failed", "scope": "core", "error": type(e).__name__ + ": " + str(e)}
+            save(directory, run)
+            raise
         run["phase"] = "ready"
         run["validation"] = {"status": "passed", "scope": "core", "checks": result}
         save(directory, run)

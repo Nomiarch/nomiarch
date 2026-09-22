@@ -123,6 +123,12 @@ def install(bundle_path, trusted_key, action="install", device=None, recipient=N
             if not identities_path.exists():
                 write_json(identities_path, {k: secrets.token_urlsafe(32) for k in ("operator", "worker", "broker")})
             identities = read_json(identities_path)
+            # After first admission, Nomiarch owns the no-forwarding DNS config.
+            # K3s otherwise reapplies its packaged Corefile on every restart.
+            # The documented .skip mechanism retains existing addon resources.
+            dns_skip = ROOT / "k3s/server/manifests/coredns.yaml.skip"
+            if current:
+                atomic_write(dns_skip, "Managed by Nomiarch; K3s version migration requires admission.\n")
             for name in ("core", "model"):
                 directory = ROOT / name
                 directory.mkdir(exist_ok=True, mode=0o700)
@@ -164,6 +170,7 @@ def install(bundle_path, trusted_key, action="install", device=None, recipient=N
             # A same-version reinstall still needs image import and model refresh.
             runner.run(["systemctl", "restart", "k3s"], timeout=300)
             wait_for_cluster(runner)
+            atomic_write(dns_skip, "Managed by Nomiarch; K3s version migration requires admission.\n")
             write_json(ROOT / "dns.json", dns_config())
             kubectl(runner, "apply", "-f", ROOT / "dns.json")
             manifest["policy"] = (release / "tools.rego").read_text()
