@@ -42,7 +42,7 @@ jobs:
           python -m unittest discover -s tests -p test_desktop.py -v
           python -m unittest discover -s tests -p test_foundation.py -v
       - name: Package Microsoft Azure sign-in helper
-        run: python -m PyInstaller --noconfirm --clean --onedir --console --name az --distpath cloud-tools --collect-all azure.cli.core --collect-all azure.cli.command_modules.profile --collect-all azure.cli.command_modules.vm --collect-all azure.cli.command_modules.network --collect-all azure.cli.command_modules.resource --collect-submodules azure.mgmt.compute --collect-submodules azure.mgmt.resource --collect-submodules azure.mgmt.core --collect-submodules azure.mgmt.authorization --collect-all msal --copy-metadata azure-cli --copy-metadata azure-cli-core --copy-metadata azure-cli-telemetry desktop/azure_helper.py
+        run: python -m PyInstaller --noconfirm --clean --onedir --console --name az --distpath cloud-tools --collect-all azure.cli.core --collect-all azure.cli.command_modules.util --collect-all azure.cli.command_modules.lab --collect-all azure.cli.command_modules.profile --collect-all azure.cli.command_modules.vm --collect-all azure.cli.command_modules.network --collect-all azure.cli.command_modules.privatedns --collect-all azure.cli.command_modules.resource --collect-submodules azure.mgmt.compute --collect-submodules azure.mgmt.resource --collect-submodules azure.mgmt.core --collect-submodules azure.mgmt.authorization --collect-all msal --copy-metadata azure-cli --copy-metadata azure-cli-core --copy-metadata azure-cli-telemetry desktop/azure_helper.py
       - name: Verify packaged Microsoft helper
         shell: bash
         run: |

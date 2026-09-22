@@ -352,15 +352,21 @@ def main():
                 ImageGrab.grab().save(output.with_name(output.stem+'-'+name+'.png'))
             app.home();app.update();ImageGrab.grab().save(output.with_suffix('.png'))
             if getattr(sys,'frozen',False):
+                import subprocess
                 from .cloud import packaged_helper
-                from nomiarch.common import Runner
                 helper=packaged_helper(app.repo)
                 if not helper:raise NomiarchError('Packaged Microsoft helper is missing')
                 env=dict(os.environ,AZURE_CONFIG_DIR=str(Path(folder)/'azure-test'),AZURE_CORE_COLLECT_TELEMETRY='no')
-                version=json.loads(Runner().run([helper,'version'],env=env,timeout=120))
+                def helper_output(args):
+                    result=subprocess.run([helper,*args],env=env,timeout=120,capture_output=True,text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                    if result.returncode or 'ERROR:' in result.stderr:
+                        raise NomiarchError('Packaged Microsoft helper failed: '+result.stderr[-2000:])
+                    return result.stdout
+                version=json.loads(helper_output(['version']))
                 if version.get('azure-cli')!='2.90.0':raise NomiarchError('Microsoft helper version differs')
-                for args in (['account','--help'],['vm','image','list','--help'],['network','nsg','show','--help'],['group','delete','--help']):
-                    Runner().run([helper,*args],env=env,timeout=120)
+                for args in (['login','--help'],['account','--help'],['vm','image','list','--help'],['network','nsg','show','--help'],['group','delete','--help']):
+                    helper_output(args)
             app.destroy()
             output.write_text('Desktop screens passed')
         return
