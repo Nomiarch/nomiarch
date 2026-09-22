@@ -16,9 +16,11 @@ from nomiarch.bootstrap import bundle, controller
 from nomiarch.bootstrap.config import validate
 from nomiarch.common import NomiarchError, read_json, write_json
 from . import service
+from .foundation import FoundationScreens
 from .catalog import CORE_VERSION, DESKTOP_VERSION, PINS
 
 BG, PANEL, TEXT, MUTED, ACCENT = '#101a19', '#1a2825', '#eff8f3', '#a6beb4', '#a5edc7'
+FONT = 'Segoe UI' if os.name == 'nt' else 'Helvetica Neue' if sys.platform == 'darwin' else 'DejaVu Sans'
 
 
 class LogSink(io.TextIOBase):
@@ -29,7 +31,7 @@ class LogSink(io.TextIOBase):
     def flush(self): pass
 
 
-class App(tk.Tk):
+class App(FoundationScreens, tk.Tk):
     def __init__(self, root_dir=None):
         super().__init__()
         self.title('Nomiarch Setup')
@@ -49,23 +51,36 @@ class App(tk.Tk):
         self.cpus = tk.StringVar(value='2')
         self.disk = tk.StringVar(value='40')
         self.recipient = tk.StringVar()
+        self.foundation_variables()
         self.status = tk.StringVar(value='Welcome. Let’s create your first Nomiarch system.')
         style = ttk.Style(self)
         style.theme_use('clam')
         style.configure('TFrame', background=BG)
-        style.configure('TLabel', background=BG, foreground=TEXT, font=('Segoe UI', 11))
-        style.configure('TButton', font=('Segoe UI', 11), padding=(15,10))
+        style.configure('TLabel', background=BG, foreground=TEXT, font=(FONT, 11))
+        style.configure('TButton', font=(FONT, 11), padding=(15,10))
         style.configure('Accent.TButton', background=ACCENT, foreground=BG)
-        style.configure('TRadiobutton', background=BG, foreground=TEXT, font=('Segoe UI',11))
+        style.configure('TRadiobutton', background=BG, foreground=TEXT, font=(FONT,11))
         style.configure('TProgressbar', background=ACCENT, troughcolor=PANEL)
         header = tk.Frame(self, bg=BG)
         header.pack(fill='x', padx=32, pady=(24,12))
-        tk.Label(header, text='NOMIARCH', bg=BG, fg=ACCENT, font=('Segoe UI',22,'bold')).pack(side='left')
+        tk.Label(header, text='NOMIARCH', bg=BG, fg=ACCENT, font=(FONT,22,'bold')).pack(side='left')
         tk.Label(header, text=f'Setup {DESKTOP_VERSION}  ·  Core {CORE_VERSION}', bg=BG, fg=MUTED).pack(side='right')
-        self.steps = tk.Label(self, bg=BG, fg=ACCENT, font=('Segoe UI',10))
+        self.steps = tk.Label(self, bg=BG, fg=ACCENT, font=(FONT,10))
         self.steps.pack(anchor='w', padx=32, pady=8)
-        self.content = ttk.Frame(self)
-        self.content.pack(fill='both', expand=True, padx=32)
+        viewport = ttk.Frame(self)
+        viewport.pack(fill='both', expand=True, padx=32)
+        self.canvas = tk.Canvas(viewport, bg=BG, highlightthickness=0)
+        scroll = ttk.Scrollbar(viewport, orient='vertical', command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right', fill='y'); self.canvas.pack(side='left', fill='both', expand=True)
+        self.content = ttk.Frame(self.canvas)
+        window = self.canvas.create_window((0,0), window=self.content, anchor='nw')
+        self.content.bind('<Configure>', lambda event: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfigure(window, width=event.width))
+        def wheel(event):
+            if self.winfo_containing(event.x_root,event.y_root) == self.log: return
+            self.canvas.yview_scroll(-1 if event.num==4 else 1 if event.num==5 else (-1 if event.delta>0 else 1), 'units')
+        self.bind_all('<MouseWheel>', wheel); self.bind_all('<Button-4>', wheel); self.bind_all('<Button-5>', wheel)
         footer = ttk.Frame(self)
         footer.pack(fill='x', padx=32, pady=16)
         ttk.Label(footer, textvariable=self.status, wraplength=860).pack(anchor='w', pady=(0,10))
@@ -79,8 +94,9 @@ class App(tk.Tk):
 
     def clear(self, title, intro, stage=''):
         for child in self.content.winfo_children(): child.destroy()
+        self.canvas.yview_moveto(0)
         self.steps.configure(text=stage)
-        ttk.Label(self.content, text=title, font=('Segoe UI',25,'bold')).pack(anchor='w', pady=(14,12))
+        ttk.Label(self.content, text=title, font=(FONT,25,'bold')).pack(anchor='w', pady=(14,12))
         ttk.Label(self.content, text=intro, wraplength=850).pack(anchor='w', pady=(0,20))
 
     def button(self, text, command, primary=False):
@@ -95,9 +111,11 @@ class App(tk.Tk):
 
     def home(self):
         self.clear('Your AI. Your environment.',
-                   'Create a local Nomiarch VM, prepare a kit for an isolated computer, or maintain an existing installation. No terminal commands needed.')
-        self.button('Set up this computer', self.prerequisites, True)
+                   'Choose where your system runs. The wizard creates your configuration, shows the plan and asks for your approval before installation.')
+        self.button('Set up this computer', lambda: self.customer('local'), True)
+        self.button('Set up in the cloud — Azure', lambda: self.customer('azure'))
         self.button('Download an offline kit', lambda: self.download_screen(True))
+        self.button('Open a customer configuration', self.resume_foundation)
         self.button('Manage an installation', self.manage)
         ttk.Label(self.content,text='Preview: sample configuration checks, local inference and audit evidence.\nPhysical network isolation remains part of your site setup. Windows Home and ARM Windows are not supported yet.',wraplength=830,foreground=MUTED).pack(anchor='w',pady=20)
 
@@ -121,8 +139,13 @@ class App(tk.Tk):
         self.start(service.preflight, ready)
 
     def support(self):
-        if messagebox.askokcancel('Install VM support', 'Download and open Canonical Multipass? Windows/macOS may ask for administrator approval. Your existing VMs will not be removed.'):
-            self.start(lambda: service.install_vm_support(self.root_dir/'downloads',self.download_progress), lambda value:self.status.set(value), cancellable=True)
+        online, folder = self.isolation.get() != 'disconnected', self.kit.get()
+        if not online:
+            selected=filedialog.askdirectory(title='Select the admitted kit containing the VM support installer')
+            if not selected:return
+            folder=selected;self.kit.set(folder)
+        if messagebox.askokcancel('Install VM support', 'Open the verified Canonical Multipass installer? Windows/macOS may ask for administrator approval. Your existing VMs will not be removed.'):
+            self.start(lambda: service.install_vm_support(folder,self.download_progress,online,self.cancel), lambda value:self.status.set(value), cancellable=True)
 
     def hyperv(self):
         if messagebox.askokcancel('Enable Hyper-V', 'Windows will request administrator approval to enable Hyper-V. A restart may be required. Continue?'):
@@ -135,11 +158,12 @@ class App(tk.Tk):
         self.clear('Get the system files', 'Downloads are checked automatically against the trusted catalog included in this app. Completed verified files are reused when you retry.', '01  Computer    /    02  Files    /    03  Review    /    04  Install')
         self.kit_only = kit_only
         if not kit_only:
-            ttk.Radiobutton(self.content,text='Download and verify automatically',variable=self.mode,value='online').pack(anchor='w',pady=7)
+            if self.isolation.get() != 'disconnected':
+                ttk.Radiobutton(self.content,text='Download and verify automatically',variable=self.mode,value='online').pack(anchor='w',pady=7)
             ttk.Radiobutton(self.content,text='Use files I brought into this environment (no downloads)',variable=self.mode,value='offline').pack(anchor='w',pady=7)
         else:
             self.mode.set('online')
-            ttk.Label(self.content,text='This downloads a kit for the same CPU architecture as this computer.\nBring this app and the kit into the isolated environment; install VM support there beforehand.',wraplength=800).pack(anchor='w',pady=10)
+            ttk.Label(self.content,text='This downloads a kit for the same CPU architecture as this computer, including VM support for Windows/macOS. Bring this app and the kit through your approved transfer process.',wraplength=800).pack(anchor='w',pady=10)
         self.entry('Kit folder',self.kit)
         self.button('Choose folder…',self.choose_kit)
         self.button('Verify files' if self.mode.get()=='offline' else 'Prepare files', self.prepare, True)
@@ -155,7 +179,7 @@ class App(tk.Tk):
 
     def prepare(self):
         folder, online = self.kit.get(), self.mode.get()=='online'
-        try: arch=service.architecture()
+        try: arch='amd64' if self.target=='azure' and not self.kit_only else service.architecture()
         except Exception as e: messagebox.showerror('This computer',str(e));return
         def task():
             paths=service.prepare_kit(folder,arch,online,self.download_progress,self.cancel)
@@ -167,29 +191,18 @@ class App(tk.Tk):
             if self.kit_only:
                 self.status.set('Offline kit verified. Copy this folder and the desktop app through your approved transfer process.')
                 messagebox.showinfo('Kit ready','Your offline kit is ready. The isolated computer also needs VM support installed.')
+            elif getattr(self,'resume_after_files',False):
+                self.resume_after_files=False
+                self.scaffold_ready()
             else:self.review()
         self.start(task,ready,cancellable=True)
 
     def review(self):
-        self.clear('Make it yours', 'The defaults fit the included small model. Installation creates one new VM and keeps it for testing and upgrades.', '01  Computer    /    02  Files    /    03  Review    /    04  Install')
+        self.clear('Choose your system size', 'The defaults fit the included small model. Next we will save a customer-owned configuration for you to review.', '04  System configuration')
         for label,var in [('System name',self.name),('CPUs',self.cpus),('Memory (GB)',self.memory),('Disk (GB)',self.disk)]:self.entry(label,var)
-        ttk.Label(self.content,text=f'Core {CORE_VERSION}  ·  Local model  ·  No cloud account\nThis installs from verified local files. It does not disconnect your computer from the Internet.',wraplength=800,foreground=MUTED).pack(anchor='w',pady=16)
-        self.button('Create my Nomiarch system',self.install,True)
+        ttk.Label(self.content,text=f'Core {CORE_VERSION}  ·  Local model  ·  Destination: {self.target}\nYour configuration is saved before any resources are created.',wraplength=800,foreground=MUTED).pack(anchor='w',pady=16)
+        self.button('Create my configuration',self.make_scaffold,True)
         self.button('Back',lambda:self.download_screen(False))
-
-    def install(self):
-        try:
-            config={'api_version':'nomiarch.io/v1alpha1','name':self.name.get(),'target':'local','architecture':service.architecture(),
-                    'capacity':{'cpus':int(self.cpus.get()),'memory_gib':int(self.memory.get()),'disk_gib':int(self.disk.get())},
-                    'local':{'image':self.paths['image'],'image_sha256':PINS[service.architecture()]['image'][1]},
-                    'lifecycle':{'destroy_after':False,'max_runtime_minutes':60}}
-            validate(config)
-        except Exception as e:messagebox.showerror('Check the settings',str(e));return
-        paths=dict(self.paths)
-        def task():
-            service.preflight()
-            return controller.apply(config,self.state_dir,'core',archive=paths['bundle'],key=paths['key'],repo=self.repo)
-        self.start(task,self.installed)
 
     def installed(self,result):
         if result['validation']['status']!='passed':
@@ -206,7 +219,7 @@ class App(tk.Tk):
         for path in sorted(self.state_dir.glob('runs/*/run.json')):
             try:
                 record=read_json(path)
-                if record.get('inventory') and record.get('cleanup',{}).get('status')!='deleted':self.records.append((path.parent,record))
+                if (record.get('inventory') or record.get('creation_started')) and record.get('cleanup',{}).get('status')!='deleted':self.records.append((path.parent,record))
             except NomiarchError:pass
         options=[f"{r['config']['name']}  ·  {r['phase']}  ·  {p.name[:8]}" for p,r in self.records]
         self.listbox=ttk.Combobox(self.content,values=options,textvariable=self.selection,state='readonly',width=75)
@@ -217,6 +230,7 @@ class App(tk.Tk):
         for label,action in [('Verify','verify'),('Repair','repair'),('Upgrade','upgrade'),('Back up','backup'),('Saved status','status')]:
             ttk.Button(row,text=label,command=lambda a=action:self.maintenance(a)).pack(side='left',padx=(0,6))
         self.button('Remove selected VM…',lambda:self.maintenance('destroy'))
+        self.button('Observe and review foundation changes',self.foundation_management)
         self.button('Home',self.home)
 
     def import_run(self):
@@ -233,6 +247,9 @@ class App(tk.Tk):
         i=self.listbox.current()
         if i<0:messagebox.showinfo('Select an installation','Select or import an installation first.');return
         directory,record=self.records[i]
+        if record.get('foundation') and action in ('repair','upgrade','destroy'):
+            self.foundation_operation(directory,record,action)
+            return
         args=SimpleNamespace(action=action,run=str(directory),repo=self.repo)
         if action in ('repair','upgrade'):
             args.bundle=filedialog.askopenfilename(title='Select signed Core bundle',filetypes=[('Nomiarch bundle','*.tar')])
@@ -263,8 +280,9 @@ class App(tk.Tk):
     def set_buttons(self,disabled):
         def walk(widget):
             for child in widget.winfo_children():
-                if isinstance(child,ttk.Button):
-                    if child.cget('text')!='Cancel download':child.state(['disabled'] if disabled else ['!disabled'])
+                if isinstance(child,(ttk.Button,ttk.Entry,ttk.Combobox,ttk.Radiobutton,ttk.Checkbutton)):
+                    if not (isinstance(child,ttk.Button) and child.cget('text')=='Cancel download'):
+                        child.state(['disabled'] if disabled else ['!disabled'])
                 walk(child)
         walk(self.content)
         if not disabled and hasattr(self,'continue_button') and self.continue_button.winfo_exists() and not self.preflight_ready:
@@ -298,6 +316,11 @@ class App(tk.Tk):
                     name,received,total=value
                     self.progress.stop();self.progress.configure(mode='determinate',value=100*received/total if total else 0)
                     self.status.set(f'{name}: {received/(1024**2):.0f} MB'+(f' of {total/(1024**2):.0f} MB' if total else ''))
+                elif kind=='device-code':
+                    self.status.set(value)
+                    self.log.configure(state='normal');self.log.insert('end',value+'\n');self.log.see('end');self.log.configure(state='disabled')
+                    import webbrowser
+                    webbrowser.open('https://microsoft.com/devicelogin')
                 else:
                     self.busy=False;self.progress.stop();self.set_buttons(False)
                     if kind=='error':self.status.set('Stopped. Your saved installation records are retained.');messagebox.showerror('Nomiarch needs your attention',value)
@@ -318,11 +341,34 @@ def main():
     if '--self-test' in sys.argv:
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
-            app=App(folder);app.update();app.download_screen();app.update();app.review();app.update();app.manage();app.update();app.home();app.update();
             from PIL import ImageGrab
-            ImageGrab.grab().save(Path(sys.argv[sys.argv.index('--self-test')+1]).with_suffix('.png'))
+            app=App(folder)
+            output=Path(sys.argv[sys.argv.index('--self-test')+1])
+            screens=[('home',app.home),('customer',lambda:app.customer('local')),('repository',app.repository_screen),
+                     ('github',app.github_screen),('azure',app.cloud_screen),('files',app.download_screen),('capacity',app.review),('manage',app.manage)]
+            for name,screen in screens:
+                screen();app.update()
+                app.set_buttons(True);app.set_buttons(False);app.update()
+                ImageGrab.grab().save(output.with_name(output.stem+'-'+name+'.png'))
+            app.home();app.update();ImageGrab.grab().save(output.with_suffix('.png'))
+            if getattr(sys,'frozen',False):
+                import subprocess
+                from .cloud import packaged_helper
+                helper=packaged_helper(app.repo)
+                if not helper:raise NomiarchError('Packaged Microsoft helper is missing')
+                env=dict(os.environ,AZURE_CONFIG_DIR=str(Path(folder)/'azure-test'),AZURE_CORE_COLLECT_TELEMETRY='no')
+                def helper_output(args):
+                    result=subprocess.run([helper,*args],env=env,timeout=120,capture_output=True,text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                    if result.returncode or 'ERROR:' in result.stderr:
+                        raise NomiarchError('Packaged Microsoft helper failed: '+result.stderr[-2000:])
+                    return result.stdout
+                version=json.loads(helper_output(['version']))
+                if version.get('azure-cli')!='2.90.0':raise NomiarchError('Microsoft helper version differs')
+                for args in (['login','--help'],['account','--help'],['vm','image','list','--help'],['network','nsg','show','--help'],['group','delete','--help']):
+                    helper_output(args)
             app.destroy()
-            Path(sys.argv[sys.argv.index('--self-test')+1]).write_text('Desktop screens passed')
+            output.write_text('Desktop screens passed')
         return
     App().mainloop()
 

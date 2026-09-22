@@ -124,10 +124,30 @@ class Azure(SSH):
         caps = {c["name"]: c["value"] for c in exact[0].get("capabilities", [])}
         if float(caps.get("vCPUs", 0)) < self.config["capacity"]["cpus"] or float(caps.get("MemoryGB", 0)) < self.config["capacity"]["memory_gib"]:
             raise NomiarchError("Azure VM size does not meet the declared CPU/memory capacity")
+        if self.run.get('foundation') and (float(caps['vCPUs']) != self.config['capacity']['cpus'] or float(caps['MemoryGB']) != self.config['capacity']['memory_gib']):
+            raise NomiarchError('Set the configuration capacity to match the selected Azure VM size exactly: ' + caps['vCPUs'] + ' CPUs and ' + caps['MemoryGB'] + ' GB memory')
         work = self.directory / "infra"
-        shutil.copytree(self.repo / "infra/azure", work, ignore=shutil.ignore_patterns(".terraform", "*.tfstate*", "*.tfplan", "*.auto.tfvars.json"))
+        if self.run.get("foundation"):
+            from nomiarch.foundation.scaffold import load_supported
+            project = Path(self.run["foundation"]["project_directory"])
+            value, snapshot = load_supported(project, self.repo)
+            if snapshot != self.run["foundation"]["snapshot"]:
+                raise NomiarchError("Customer scaffold changed during planning")
+            # Execute an isolated copy of the customer's reviewed root/module.
+            # State and generated secret inputs never go into the Git checkout.
+            shutil.copytree(project / "modules", self.directory / "modules")
+            shutil.copytree(project / "environments" / value["environment"], work)
+            main = work / 'main.tf'
+            main.write_text(main.read_text().replace('../../modules/azure', '../modules/azure'))
+            shutil.copy(project / "modules/azure/.terraform.lock.hcl", work / '.terraform.lock.hcl')
+        else:
+            shutil.copytree(self.repo / "infra/azure", work, ignore=shutil.ignore_patterns(".terraform", "*.tfstate*", "*.tfplan", "*.auto.tfvars.json"))
         key = self.directory / "ssh-host"
-        self.command(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key])
+        if self.run.get("foundation"):
+            from nomiarch.foundation.ssh_keys import generate
+            generate(key)
+        else:
+            self.command(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key])
         variables = {k: details[k] for k in ("subscription_id", "location", "vm_size", "ssh_user", "admin_cidr", "image")}
         variables.update({"prefix": self.run["prefix"], "run_id": self.run["id"],
                           "expires_at": str(self.run["expires_at"]) if self.run["destroy_after"] else "retained",

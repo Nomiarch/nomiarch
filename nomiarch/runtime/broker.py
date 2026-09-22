@@ -10,6 +10,9 @@ def evaluate(config):
     """Read-only checks on submitted configuration; never a live-cloud claim."""
     if not isinstance(config, dict):
         raise ValueError("Expected a configuration object")
+    if config.get('kind') == 'foundation':
+        from nomiarch.core.foundation import evaluate as evaluate_foundation
+        return evaluate_foundation(config)
     checks = [
         ("public_access", False, "Disable anonymous/public access"),
         ("https_only", True, "Require HTTPS"),
