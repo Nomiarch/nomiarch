@@ -1,17 +1,17 @@
-"""Reviewed download pins. Desktop 0.1.0.dev3 installs the tested Core dev2."""
+"""Reviewed download pins. Desktop 0.1.0.dev4 installs the tested Core dev3."""
 DESKTOP_VERSION = '0.1.0.dev4'
-RELEASE_READY = False  # Set after the matching Core artifacts pass both architecture gates.
-CORE_VERSION = '0.1.0.dev2'
-BASE = 'https://github.com/Nomiarch/nomiarch/releases/download/v0.1.0.dev2/'
+RELEASE_READY = True  # Published Core artifacts passed both architecture gates.
+CORE_VERSION = '0.1.0.dev3'
+BASE = 'https://github.com/Nomiarch/nomiarch/releases/download/v0.1.0.dev3/'
 IMAGE_BASE = 'https://cloud-images.ubuntu.com/releases/noble/release-20260911/'
 PINS = {
  'amd64': {
-  'bundle': ('nomiarch-amd64.tar', '4ef4bb78ceb4f6506353c44ffe92f79795e650fda38455e5796bf1c440319acc'),
-  'key': ('nomiarch-amd64-public.pem', '86b8ab1ffea27613daaa60547ead24cdd00acf40f3962b383fa1286bcc4f6e62'),
+  'bundle': ('nomiarch-amd64.tar', '4896aeb3ddb2fcbecd264c2ff798bdb4d63ab7f75e184d2d2217e1f346e96a85'),
+  'key': ('nomiarch-amd64-public.pem', '5d93c72f8580f20479db91c14e5bf7612f777e5c3b2708f2a1cbfd51dd8d82d8'),
   'image': ('ubuntu-24.04-server-cloudimg-amd64.img', '612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354')},
  'arm64': {
-  'bundle': ('nomiarch-arm64.tar', 'ed822a48750154c320623d91303c25de355ef52d18795f03437be5e27ce18230'),
-  'key': ('nomiarch-arm64-public.pem', '02b9f0d0b6f4c760ebdc20e43d6d23c78eeb8b771ad375e4bbfb21a3c3768496'),
+  'bundle': ('nomiarch-arm64.tar', 'c48311eac091b4e8cbdcfee2bcb19b9555e3e4cdbae0282e9c6c2a958e8d2c94'),
+  'key': ('nomiarch-arm64-public.pem', '63274f1215becddf1cedf59aa88311090f2678f720bba8d5a5f7ce04bbc431db'),
   'image': ('ubuntu-24.04-server-cloudimg-arm64.img', '7b682958a67ff5de068e36de6af8b75fa645d296af5a70d6500527f6a33781db')},
 }
 PREREQUISITES = {
