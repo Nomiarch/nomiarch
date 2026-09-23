@@ -83,7 +83,7 @@ resource "azurerm_linux_virtual_machine" "ghes" {
   location                        = var.location
   resource_group_name             = azurerm_resource_group.ghes.name
   size                            = var.vm_size
-  admin_username                  = "admin"
+  admin_username                  = "ghesadmin"
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.ghes.id]
   tags                            = var.tags
@@ -102,7 +102,7 @@ resource "azurerm_linux_virtual_machine" "ghes" {
   }
 
   admin_ssh_key {
-    username   = "admin"
+    username   = "ghesadmin"
     public_key = var.ssh_public_key
   }
 
