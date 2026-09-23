@@ -15,7 +15,7 @@ import urllib.request
 from nomiarch.bootstrap.config import require
 from nomiarch.common import NomiarchError, canonical
 from . import scaffold
-from .repository_transport import PrivateHTTPSHandler, certificate_context
+from .repository_transport import GHES_MODES, PrivateHTTPSHandler, certificate_context
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -32,7 +32,7 @@ class GitHub:
         if repository is not None:
             scaffold.validate_repository(repository, 'organisation', 'local-isolated')
             require(repository['mode'] in scaffold.REVIEW_MODES, 'Choose a supported review repository')
-        internal = repository is not None and repository['mode'] == 'github-enterprise'
+        internal = repository is not None and repository['mode'] in GHES_MODES
         self.origin = repository['server_url'] if internal else 'https://github.com'
         self.api = self.origin + '/api/v3' if internal else 'https://api.github.com'
         context = certificate_context(repository.get('ca_certificate') if internal else None)
