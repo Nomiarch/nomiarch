@@ -86,6 +86,16 @@ def sign_in(root, source, progress, device_message):
         raise NomiarchError('Microsoft sign-in expired. Choose Sign in to try again.') from None
 
 
+def latest_ghes_image(images):
+    candidates = []
+    for image in images:
+        urn = image.get('urn', '')
+        version = image.get('version', '')
+        if urn.startswith('GitHub:') and re.fullmatch(r'[0-9]+(?:\\.[0-9]+)+', version):
+            candidates.append((tuple(int(x) for x in version.split('.')), urn))
+    return max(candidates)[1] if candidates else None
+
+
 def account_details(subscription, location):
     run = Runner()
     run.run(['az', 'account', 'set', '--subscription', subscription])
@@ -93,9 +103,13 @@ def account_details(subscription, location):
     images = json.loads(run.run(['az', 'vm', 'image', 'list', '--publisher', 'Canonical', '--offer', 'ubuntu-24_04-lts', '--sku', 'server',
                                '--location', location, '--subscription', subscription, '--all', '--output', 'json', '--only-show-errors']))
     exact = [v for v in images if v.get('publisher') == 'Canonical' and v.get('offer') == 'ubuntu-24_04-lts' and v.get('sku') == 'server'
-             and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', v.get('version', ''))]
-    if not exact: raise NomiarchError('No admitted Ubuntu 24.04 server image was found in that Azure region')
+             and re.fullmatch(r'[0-9]+\\.[0-9]+\\.[0-9]+', v.get('version', ''))]
+    if not exact:
+        raise NomiarchError('No admitted Ubuntu 24.04 server image was found in that Azure region')
     image = max(exact, key=lambda v: tuple(int(x) for x in v['version'].split('.')))
+    ghes_images = json.loads(run.run(['az', 'vm', 'image', 'list', '--all', '--location', location, '--subscription', subscription,
+                                      '--output', 'json', '--only-show-errors', '--filter', 'GitHub-Enterprise']))
     return {'subnets': [{'label': v['name'] + ' / ' + s['name'], 'id': s['id']} for v in vnets if v['location'] == location
                         for s in v.get('subnets', []) if s['name'] not in {'GatewaySubnet', 'AzureBastionSubnet'}],
-            'image': {k: image[k] for k in ('publisher', 'offer', 'sku', 'version')}}
+            'image': {k: image[k] for k in ('publisher', 'offer', 'sku', 'version')},
+            'ghes_image_urn': latest_ghes_image(ghes_images)}
