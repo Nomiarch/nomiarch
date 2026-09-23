@@ -3,11 +3,11 @@ output "private_ip" {
 }
 
 output "management_url" {
-  value = "https://\${var.hostname}:8443"
+  value = "https://${var.hostname}:8443"
 }
 
 output "server_url" {
-  value = "https://\${var.hostname}"
+  value = "https://${var.hostname}"
 }
 
 output "actions_storage_account" {
