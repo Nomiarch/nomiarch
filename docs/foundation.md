@@ -92,13 +92,21 @@ Administration read access to inspect protection; do not grant it protection byp
 cloud deployment rights. Approval verification only needs the corresponding read access.
 Use customer-owned deployment credentials independently of the proposal account.
 
-### Internal GitHub Enterprise Server
+### GitHub Enterprise Server
 
-Use an **existing customer-operated GitHub Enterprise Server** inside your network.
-The wizard creates a repository on that server; it does not install or license the
-Git server. The server must support the REST API and the branch protections above.
+Nomiarch supports two internal GitHub Enterprise Server paths:
+
+- **Existing GHES** — connect to a customer-operated server already inside the approved network.
+- **Managed GHES bootstrap (Azure)** — generate a private Azure GHES appliance foundation first, then hand control to the customer for the GitHub licence, Management Console password, TLS private material, first administrator and internal DNS.
+
+The managed path deliberately separates bootstrap from repository authority: the new Git server cannot approve the Terraform that creates itself. After the appliance is configured, Nomiarch reconnects to it using the same protected-main and human-review controls as an existing GHES installation. The server must support the REST API and branch protections above.
 This preview targets the documented GHES 3.21 REST contract; qualify it against your
 site's server before relying on it for a customer deployment.
+
+
+For the managed Azure path, the generated customer scaffold includes `bootstrap/ghes` and a vendored `modules/ghes` recipe. It creates a private GHES VM on the selected customer subnet, premium root/data storage, restrictive NSG rules, and (when selected) an Azure Blob storage/private-endpoint foundation for GitHub Actions. The GitHub licence file, management password, TLS private key and repository tokens are never rendered into the scaffold. GitHub currently recommends at least 4 vCPU, 32 GB RAM, 400 GB root storage and 500 GB attached data storage for trial/demo or up to 10 light users; choose a memory-optimized premium-storage-capable VM size that satisfies those requirements.
+
+For an existing GHES installation:
 
 1. Ask your administrator for the HTTPS server address, customer owner, reviewer
    logins and a token issued by that server. If the server uses a private CA, also
