@@ -1,6 +1,6 @@
 locals {
   image       = split(":", var.image_urn)
-  storage_raw = lower(replace("\${var.prefix}ghes", "-", ""))
+  storage_raw = lower(replace("${var.prefix}ghes", "-", ""))
   storage     = substr(local.storage_raw, 0, min(length(local.storage_raw), 24))
   vnet_id     = join("/", slice(split("/", var.subnet_id), 0, 9))
 }
@@ -12,13 +12,13 @@ resource "azurerm_marketplace_agreement" "ghes" {
 }
 
 resource "azurerm_resource_group" "ghes" {
-  name     = "\${var.prefix}-ghes-rg"
+  name     = "${var.prefix}-ghes-rg"
   location = var.location
   tags     = var.tags
 }
 
 resource "azurerm_network_security_group" "ghes" {
-  name                = "\${var.prefix}-ghes-nsg"
+  name                = "${var.prefix}-ghes-nsg"
   location            = var.location
   resource_group_name = azurerm_resource_group.ghes.name
   tags                = var.tags
@@ -61,7 +61,7 @@ resource "azurerm_network_security_group" "ghes" {
 }
 
 resource "azurerm_network_interface" "ghes" {
-  name                = "\${var.prefix}-ghes-nic"
+  name                = "${var.prefix}-ghes-nic"
   location            = var.location
   resource_group_name = azurerm_resource_group.ghes.name
   tags                = var.tags
@@ -79,7 +79,7 @@ resource "azurerm_network_interface_security_group_association" "ghes" {
 }
 
 resource "azurerm_linux_virtual_machine" "ghes" {
-  name                            = "\${var.prefix}-ghes"
+  name                            = "${var.prefix}-ghes"
   location                        = var.location
   resource_group_name             = azurerm_resource_group.ghes.name
   size                            = var.vm_size
@@ -119,7 +119,7 @@ resource "azurerm_linux_virtual_machine" "ghes" {
 }
 
 resource "azurerm_managed_disk" "ghes_data" {
-  name                 = "\${var.prefix}-ghes-data"
+  name                 = "${var.prefix}-ghes-data"
   location             = var.location
   resource_group_name  = azurerm_resource_group.ghes.name
   storage_account_type = "Premium_LRS"
@@ -158,7 +158,7 @@ resource "azurerm_private_dns_zone" "blob" {
 
 resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
   count                 = var.actions_enabled ? 1 : 0
-  name                  = "\${var.prefix}-ghes-actions"
+  name                  = "${var.prefix}-ghes-actions"
   resource_group_name   = azurerm_resource_group.ghes.name
   private_dns_zone_name = azurerm_private_dns_zone.blob[0].name
   virtual_network_id    = local.vnet_id
@@ -168,14 +168,14 @@ resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
 
 resource "azurerm_private_endpoint" "actions" {
   count               = var.actions_enabled ? 1 : 0
-  name                = "\${var.prefix}-ghes-actions-pe"
+  name                = "${var.prefix}-ghes-actions-pe"
   location            = var.location
   resource_group_name = azurerm_resource_group.ghes.name
   subnet_id           = var.subnet_id
   tags                = var.tags
 
   private_service_connection {
-    name                           = "\${var.prefix}-ghes-actions"
+    name                           = "${var.prefix}-ghes-actions"
     private_connection_resource_id = azurerm_storage_account.actions[0].id
     subresource_names              = ["blob"]
     is_manual_connection           = false
