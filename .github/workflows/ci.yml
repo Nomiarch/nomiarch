@@ -36,6 +36,8 @@ jobs:
       - name: Azure HCL formatting and provider schema
         working-directory: infra/azure
         run: |
-          tofu fmt -check
+          tofu fmt -check -recursive
           tofu init -backend=false -input=false -lockfile=readonly
           tofu validate
+          tofu -chdir=modules/ghes init -backend=false -input=false
+          tofu -chdir=modules/ghes validate
