@@ -256,6 +256,9 @@ class FoundationScreens:
         self.button('Open configuration folder', lambda: service.open_folder(self.project_path))
         mode = value['repository']['mode']
         if mode in scaffold.REVIEW_MODES:
+            if mode == GHES_MANAGED:
+                ttk.Label(self.content, text='Bootstrap the private GHES appliance first, complete its customer-controlled licence/TLS/admin setup, and configure internal DNS. Then return here with a scoped token from that server; from this point the normal protected-branch review flow applies.', wraplength=820).pack(anchor='w', pady=10)
+                self.button('Open GHES bootstrap Terraform', lambda: service.open_folder(Path(self.project_path) / 'bootstrap' / 'ghes'))
             self.repository_token_entry(value['repository'])
             self.button('Create a NEW private customer repository', self.create_customer_repo)
             self.button('Open a configuration pull request', self.open_initial_pr)
