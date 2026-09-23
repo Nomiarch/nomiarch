@@ -167,6 +167,77 @@ def render(value, source):
         public = {k: v for k, v in details.items() if k not in {"ssh_key", "ssh_public_key"}}
         public["disk_gib"] = config["capacity"]["disk_gib"]
         files[env + "/settings.auto.tfvars.json"] = json_text(public)
+        if value["repository"]["mode"] == GHES_MANAGED:
+            ghes_module = module / "modules" / "ghes"
+            for name in ("main.tf", "variables.tf", "outputs.tf"):
+                files["modules/ghes/" + name] = (ghes_module / name).read_text()
+            enterprise = value["repository"]["enterprise"]
+            files["bootstrap/ghes/.terraform.lock.hcl"] = (module / ".terraform.lock.hcl").read_text()
+            files["bootstrap/ghes/variables.tf"] = """variable "subscription_id" { type = string }
+variable "location" { type = string }
+variable "prefix" { type = string }
+variable "subnet_id" { type = string }
+variable "admin_cidr" { type = string }
+variable "hostname" { type = string }
+variable "vm_size" { type = string }
+variable "image_urn" { type = string }
+variable "actions_enabled" { type = bool }
+variable "ssh_public_key" { type = string }
+"""
+            files["bootstrap/ghes/main.tf"] = """terraform {
+  required_version = ">= 1.10.0, < 2.0.0"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "= 4.49.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  subscription_id                 = var.subscription_id
+  resource_provider_registrations = "none"
+  features {}
+}
+
+module "ghes" {
+  source          = "../../modules/ghes"
+  subscription_id = var.subscription_id
+  location        = var.location
+  prefix          = var.prefix
+  subnet_id       = var.subnet_id
+  admin_cidr      = var.admin_cidr
+  hostname        = var.hostname
+  vm_size         = var.vm_size
+  image_urn       = var.image_urn
+  actions_enabled = var.actions_enabled
+  ssh_public_key  = var.ssh_public_key
+  tags = {
+    "managed-by"          = "nomiarch"
+    "nomiarch-foundation" = var.prefix
+  }
+}
+
+output "ghes" {
+  value = {
+    private_ip              = module.ghes.private_ip
+    management_url          = module.ghes.management_url
+    server_url              = module.ghes.server_url
+    actions_storage_account = module.ghes.actions_storage_account
+  }
+}
+"""
+            files["bootstrap/ghes/settings.auto.tfvars.json"] = json_text({
+                "subscription_id": config["azure"]["subscription_id"],
+                "location": config["azure"]["location"],
+                "prefix": "nomiarch-" + value["id"][:12],
+                "subnet_id": enterprise["subnet_id"],
+                "admin_cidr": config["azure"]["admin_cidr"],
+                "hostname": enterprise["hostname"],
+                "vm_size": enterprise["vm_size"],
+                "image_urn": enterprise["image_urn"],
+                "actions_enabled": enterprise["actions_enabled"],
+            })
     else:
         # No shell provisioners or state-only Terraform resource masquerading as VM
         # lifecycle management. Multipass is an explicit controller adapter.
@@ -212,13 +283,14 @@ inside the approved boundary, and admit updates through your transfer process.
 This scaffold is not a claim of certification, production qualification or automatic
 cloud disaster recovery. Test your actual host, network, permissions and recovery path.
 '''
-    if repo_mode == 'github-enterprise':
+    if repo_mode in GHES_MODES:
+        managed = repo_mode == GHES_MANAGED
         files['README.md'] += f'''\nInternal GitHub Enterprise Server: {value['repository']['server_url']}\n
 The controller connects directly over verified HTTPS to private network addresses.
 An optional public CA certificate is part of the reviewed configuration; tokens
 and private keys remain outside Git. The same protected-main, final-commit human
 review and separate deployment-plan approval apply to every operation.
-The site must provide the server, internal DNS and the disconnected boundary.
+{("For this managed mode, bootstrap/ghes contains the reviewed Azure appliance recipe. The customer supplies the GHES licence, Management Console password, TLS material and first administrator out of band after the appliance is created. Those secrets never enter this repository." if managed else "The site provides the server, internal DNS and the disconnected boundary.")}
 '''
     return files
 
