@@ -108,7 +108,7 @@ def account_details(subscription, location):
         raise NomiarchError('No admitted Ubuntu 24.04 server image was found in that Azure region')
     image = max(exact, key=lambda v: tuple(int(x) for x in v['version'].split('.')))
     ghes_images = json.loads(run.run(['az', 'vm', 'image', 'list', '--all', '--location', location, '--subscription', subscription,
-                                      '--output', 'json', '--only-show-errors', '--filter', 'GitHub-Enterprise']))
+                                      '--output', 'json', '--only-show-errors', '-f', 'GitHub-Enterprise']))
     return {'subnets': [{'label': v['name'] + ' / ' + s['name'], 'id': s['id']} for v in vnets if v['location'] == location
                         for s in v.get('subnets', []) if s['name'] not in {'GatewaySubnet', 'AzureBastionSubnet'}],
             'image': {k: image[k] for k in ('publisher', 'offer', 'sku', 'version')},
