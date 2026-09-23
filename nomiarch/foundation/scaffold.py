@@ -13,7 +13,7 @@ from nomiarch.bootstrap.config import keys, require, validate
 from nomiarch.common import NomiarchError, canonical, digest, read_json
 from nomiarch.desktop.catalog import CORE_VERSION, PINS
 from . import RECIPE_VERSION, SUPPORTED_RECIPE_VERSIONS
-from .repository_transport import REVIEW_MODES, certificate_context, server_origin
+from .repository_transport import GHES_MODES, GHES_MANAGED, REVIEW_MODES, certificate_context, server_origin
 
 
 def slug(value, label):
@@ -49,6 +49,8 @@ def validate_project(value):
         for field in ("ssh_key", "ssh_public_key"):
             require(details[field] == "@controller", "SSH key paths belong outside the customer repository")
     validate_repository(value.get('repository', {}), value['usage'], value['isolation'], value['recipe_version'])
+    if value['repository']['mode'] == GHES_MANAGED:
+        require(config['target'] == 'azure', 'Nomiarch-managed GitHub Enterprise Server currently requires Azure')
     if 'reconciliation' in value:
         change = value['reconciliation']
         keys(change, {'observation_sha256', 'configuration_sha256', 'checks'}, 'reconciliation')
@@ -66,7 +68,7 @@ def validate_project(value):
 
 
 def validate_repository(repository, usage, isolation, recipe_version=RECIPE_VERSION):
-    keys(repository, {"mode", "owner", "name", "approvers", "server_url", "ca_certificate"}, "repository")
+    keys(repository, {"mode", "owner", "name", "approvers", "server_url", "ca_certificate", "enterprise"}, "repository")
     mode = repository.get('mode')
     require(mode in {'local', 'offline'} | REVIEW_MODES, 'Choose local records, a supported repository or configuration export')
     if usage == 'organisation':
@@ -80,13 +82,27 @@ def validate_repository(repository, usage, isolation, recipe_version=RECIPE_VERS
         require(isinstance(approvers, list) and 1 <= len(approvers) <= 10, "Enter at least one human GitHub approver")
         require(all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", a) for a in approvers), "Invalid approver login")
         require(len(set(a.lower() for a in approvers)) == len(approvers), "Approvers must be unique")
-        if mode == 'github-enterprise':
+        if mode in GHES_MODES:
             require(recipe_version != '0.2.0', 'Internal repository support requires recipe 0.3.0 or later')
             require(repository.get('server_url') == server_origin(repository.get('server_url')), 'Use the canonical internal HTTPS server address')
             if 'ca_certificate' in repository:
                 certificate_context(repository['ca_certificate'])
+            if mode == GHES_MANAGED:
+                enterprise = repository.get('enterprise', {})
+                keys(enterprise, {'hostname', 'sizing_profile', 'actions_enabled', 'image_urn', 'vm_size', 'subnet_id'}, 'repository.enterprise')
+                require(server_origin('https://' + enterprise.get('hostname', '')) == repository['server_url'],
+                        'Managed GHES hostname must match the internal repository address')
+                require(enterprise.get('sizing_profile') in {'evaluation', 'small', 'custom'}, 'Choose a supported GHES sizing profile')
+                require(type(enterprise.get('actions_enabled')) is bool, 'repository.enterprise.actions_enabled must be a boolean')
+                require(isinstance(enterprise.get('image_urn'), str) and enterprise['image_urn'].startswith('GitHub:'),
+                        'Select an admitted GitHub Enterprise Server Azure image')
+                require(bool(re.fullmatch(r"Standard_[A-Za-z0-9_]+", enterprise.get('vm_size', ''))), 'Select an explicit GHES Azure VM size')
+                require(isinstance(enterprise.get('subnet_id'), str) and enterprise['subnet_id'].startswith('/subscriptions/'),
+                        'Managed GHES requires an existing private Azure subnet')
+            else:
+                require('enterprise' not in repository, 'Existing GHES does not use managed deployment settings')
         else:
-            require(not {'server_url', 'ca_certificate'} & set(repository), 'Public GitHub uses its fixed server and system certificate trust')
+            require(not {'server_url', 'ca_certificate', 'enterprise'} & set(repository), 'Public GitHub uses its fixed server and system certificate trust')
     else:
         require(set(repository) == {'mode'}, 'Repository account settings require a supported repository mode')
     return repository
@@ -160,7 +176,7 @@ def render(value, source):
     repo_mode = value["repository"]["mode"]
     if repo_mode in REVIEW_MODES:
         files[".github/CODEOWNERS"] = "* " + " ".join("@" + a for a in value["repository"]["approvers"]) + "\n"
-    if repo_mode == 'github-enterprise' and 'ca_certificate' in value['repository']:
+    if repo_mode in GHES_MODES and 'ca_certificate' in value['repository']:
         files['trust/repository-ca.crt'] = value['repository']['ca_certificate']
     if 'reconciliation' in value:
         files['requests/reconcile.json'] = json_text(value['reconciliation'])
