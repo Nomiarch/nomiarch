@@ -91,7 +91,7 @@ def latest_ghes_image(images):
     for image in images:
         urn = image.get('urn', '')
         version = image.get('version', '')
-        if urn.startswith('GitHub:') and re.fullmatch(r'[0-9]+(?:\\.[0-9]+)+', version):
+        if urn.startswith('GitHub:') and re.fullmatch(r'[0-9]+(?:\.[0-9]+)+', version):
             candidates.append((tuple(int(x) for x in version.split('.')), urn))
     return max(candidates)[1] if candidates else None
 
@@ -103,7 +103,7 @@ def account_details(subscription, location):
     images = json.loads(run.run(['az', 'vm', 'image', 'list', '--publisher', 'Canonical', '--offer', 'ubuntu-24_04-lts', '--sku', 'server',
                                '--location', location, '--subscription', subscription, '--all', '--output', 'json', '--only-show-errors']))
     exact = [v for v in images if v.get('publisher') == 'Canonical' and v.get('offer') == 'ubuntu-24_04-lts' and v.get('sku') == 'server'
-             and re.fullmatch(r'[0-9]+\\.[0-9]+\\.[0-9]+', v.get('version', ''))]
+             and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', v.get('version', ''))]
     if not exact:
         raise NomiarchError('No admitted Ubuntu 24.04 server image was found in that Azure region')
     image = max(exact, key=lambda v: tuple(int(x) for x in v['version'].split('.')))
