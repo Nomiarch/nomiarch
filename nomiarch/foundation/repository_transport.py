@@ -11,7 +11,11 @@ from nomiarch.bootstrap.config import require
 from nomiarch.common import NomiarchError
 
 
-REVIEW_MODES = frozenset({'github', 'github-enterprise'})
+GITHUB_SAAS = 'github'
+GHES_EXISTING = 'github-enterprise'
+GHES_MANAGED = 'github-enterprise-new'
+GHES_MODES = frozenset({GHES_EXISTING, GHES_MANAGED})
+REVIEW_MODES = frozenset({GITHUB_SAAS, GHES_EXISTING, GHES_MANAGED})
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
     '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', 'fc00::/7', '::1/128'))
 

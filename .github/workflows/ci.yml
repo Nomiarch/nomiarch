@@ -39,3 +39,5 @@ jobs:
           tofu fmt -check
           tofu init -backend=false -input=false -lockfile=readonly
           tofu validate
+          tofu -chdir=modules/ghes init -backend=false -input=false
+          tofu -chdir=modules/ghes validate

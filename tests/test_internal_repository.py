@@ -42,6 +42,59 @@ class InternalSettingsTests(unittest.TestCase):
         bad = dict(INTERNAL, mode='github')
         with self.assertRaises(NomiarchError): scaffold.validate_repository(bad, 'organisation', 'local-isolated')
 
+    def test_managed_ghes_is_azure_only_and_renders_bootstrap_without_secrets(self):
+        subnet = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/net/providers/Microsoft.Network/virtualNetworks/core/subnets/private'
+        azure = {
+            'api_version': 'nomiarch.io/v1alpha1', 'name': 'managed-ghes', 'target': 'azure', 'architecture': 'amd64',
+            'capacity': {'cpus': 2, 'memory_gib': 8, 'disk_gib': 40},
+            'lifecycle': {'destroy_after': False, 'max_runtime_minutes': 120},
+            'azure': {
+                'subscription_id': '00000000-0000-0000-0000-000000000000', 'location': 'canadacentral',
+                'vm_size': 'Standard_D2s_v5', 'ssh_user': 'nomiarch', 'ssh_key': '/private/key',
+                'ssh_public_key': '/private/key.pub', 'admin_cidr': '10.20.0.0/24', 'subnet_id': subnet,
+                'image': {'publisher': 'Canonical', 'offer': 'ubuntu-24_04-lts', 'sku': 'server', 'version': '1.0.0'},
+            },
+        }
+        managed = {
+            'mode': 'github-enterprise-new', 'server_url': 'https://git.company.internal',
+            'owner': 'customer', 'name': 'foundation', 'approvers': ['reviewer'],
+            'enterprise': {
+                'hostname': 'git.company.internal', 'sizing_profile': 'evaluation', 'actions_enabled': True,
+                'image_urn': 'GitHub:GitHub-Enterprise:GitHub-Enterprise:3.20.0',
+                'vm_size': 'Standard_E4s_v5', 'subnet_id': subnet,
+            },
+        }
+        value = scaffold.project(azure, 'customer', 'evaluation', 'organisation', 'cloud-restricted', managed)
+        files = scaffold.render(value, ROOT)
+        self.assertIn('bootstrap/ghes/main.tf', files)
+        self.assertIn('modules/ghes/main.tf', files)
+        self.assertIn('.github/CODEOWNERS', files)
+        rendered = ''.join(files.values())
+        self.assertNotIn('/private/key', rendered)
+        self.assertNotIn('license', files['foundation.json'].lower())
+        self.assertNotIn('password', files['foundation.json'].lower())
+        self.assertIn('git.company.internal', files['foundation.json'])
+        with self.assertRaises(NomiarchError):
+            scaffold.project(foundation_tests.LOCAL, 'customer', 'evaluation', 'organisation', 'local-isolated', managed)
+
+    def test_managed_ghes_rejects_public_server_and_missing_appliance_inputs(self):
+        base = {
+            'mode': 'github-enterprise-new', 'server_url': 'https://git.company.internal',
+            'owner': 'customer', 'name': 'foundation', 'approvers': ['reviewer'],
+            'enterprise': {
+                'hostname': 'git.company.internal', 'sizing_profile': 'evaluation', 'actions_enabled': True,
+                'image_urn': 'GitHub:GitHub-Enterprise:GitHub-Enterprise:3.20.0',
+                'vm_size': 'Standard_E4s_v5',
+                'subnet_id': '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/net/providers/Microsoft.Network/virtualNetworks/core/subnets/private',
+            },
+        }
+        bad = copy.deepcopy(base); bad['server_url'] = 'https://github.com'
+        with self.assertRaises(NomiarchError):
+            scaffold.validate_repository(bad, 'organisation', 'cloud-restricted')
+        bad = copy.deepcopy(base); bad['enterprise']['image_urn'] = ''
+        with self.assertRaises(NomiarchError):
+            scaffold.validate_repository(bad, 'organisation', 'cloud-restricted')
+
     def test_server_address_rejects_credentials_public_services_and_ambiguous_urls(self):
         for url in ('http://git.internal', 'https://user:secret@git.internal', 'https://@git.internal',
                     'https://git.internal/api/v3', 'https://git.internal?x', 'https://git.internal#x',

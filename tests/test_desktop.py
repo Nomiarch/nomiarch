@@ -10,10 +10,19 @@ import unittest
 from unittest.mock import patch
 
 from nomiarch.common import NomiarchError, Runner, atomic_write, digest, file_lock
-from nomiarch.desktop import service
+from nomiarch.desktop import cloud, service
 
 
 class DesktopTests(unittest.TestCase):
+    def test_latest_ghes_image_uses_latest_numeric_github_urn(self):
+        images = [
+            {'urn': 'GitHub:GitHub-Enterprise:GitHub-Enterprise:3.19.2', 'version': '3.19.2'},
+            {'urn': 'Other:thing:sku:9.9.9', 'version': '9.9.9'},
+            {'urn': 'GitHub:GitHub-Enterprise:GitHub-Enterprise:3.20.1', 'version': '3.20.1'},
+        ]
+        self.assertEqual(cloud.latest_ghes_image(images), 'GitHub:GitHub-Enterprise:GitHub-Enterprise:3.20.1')
+        self.assertIsNone(cloud.latest_ghes_image([]))
+
     def test_download_rejects_tampering_and_removes_partial_file(self):
         class Response(io.BytesIO):
             url='https://example.test/file'

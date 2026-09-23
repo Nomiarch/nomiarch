@@ -5,11 +5,12 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
+import urllib.parse
 
 from nomiarch.common import NomiarchError, canonical, read_json, write_json
 from nomiarch.foundation import changes, deployment, maintenance, observe, scaffold
 from nomiarch.foundation.repository import GitHub
-from nomiarch.foundation.repository_transport import certificate_context, server_origin
+from nomiarch.foundation.repository_transport import GHES_MANAGED, GHES_MODES, certificate_context, server_origin
 from . import cloud, service
 from .catalog import PINS
 
@@ -21,9 +22,10 @@ class FoundationScreens:
                             'approvers': '', 'github_token': '', 'pull_number': '', 'isolation': 'local-isolated',
                             'project_folder': '', 'subscription': '', 'region': 'canadacentral',
                             'vm_size': 'Standard_D2s_v5', 'admin_cidr': '', 'subnet': '', 'server_url': '',
+                            'ghes_vm_size': 'Standard_E4s_v5', 'ghes_actions': 'yes',
                             'ca_status': 'Use this computer’s trusted certificates'}.items():
             setattr(self, name, tk.StringVar(value=value))
-        self.target, self.project_path, self.azure_image = 'local', None, None
+        self.target, self.project_path, self.azure_image, self.azure_ghes_image = 'local', None, None, None
         self.accounts, self.subnets = [], []
         self.repository_ca, self.token_scope = None, None
         for name in ('repo_mode', 'repo_owner', 'repo_name', 'approvers', 'server_url'):
@@ -58,7 +60,9 @@ class FoundationScreens:
             ttk.Radiobutton(self.content, text='Keep a local configuration and approval record', variable=self.repo_mode, value='local').pack(anchor='w', pady=5)
         if self.isolation.get() != 'disconnected':
             ttk.Radiobutton(self.content, text='Private GitHub repository with human review', variable=self.repo_mode, value='github').pack(anchor='w', pady=5)
-        ttk.Radiobutton(self.content, text='Internal GitHub Enterprise Server with human review', variable=self.repo_mode, value='github-enterprise').pack(anchor='w', pady=5)
+        ttk.Radiobutton(self.content, text='Existing GitHub Enterprise Server with human review', variable=self.repo_mode, value='github-enterprise').pack(anchor='w', pady=5)
+        if self.target == 'azure':
+            ttk.Radiobutton(self.content, text='Deploy a dedicated GitHub Enterprise Server in this Azure environment', variable=self.repo_mode, value=GHES_MANAGED).pack(anchor='w', pady=5)
         ttk.Radiobutton(self.content, text='Export for another review system (configuration only)', variable=self.repo_mode, value='offline').pack(anchor='w', pady=5)
         self.button('Continue', self.repository_next, True)
         self.button('Back', lambda: self.customer(self.target))
@@ -74,19 +78,27 @@ class FoundationScreens:
 
     def github_screen(self):
         self.github_token.set('')
-        internal = self.repo_mode.get() == 'github-enterprise'
+        mode = self.repo_mode.get()
+        internal, managed = mode in GHES_MODES, mode == GHES_MANAGED
         self.clear('Your organisation’s repository', 'A designated human must approve the final pull request. The proposer cannot approve their own change. Use a separate customer account for deployment.', '02  Repository access')
         if internal:
             self.entry('Internal HTTPS address', self.server_url)
-            ttk.Label(self.content, text='Use your existing internal GitHub Enterprise Server, for example https://git.company.internal. It must resolve to private network addresses.', wraplength=820).pack(anchor='w', pady=5)
-            self.button('Choose public CA certificate…', self.choose_repository_ca)
-            self.button('Use this computer’s certificate trust', self.reset_repository_ca)
-            ttk.Label(self.content, textvariable=self.ca_status, wraplength=820).pack(anchor='w', pady=5)
+            ttk.Label(self.content, text=('Choose the private address Nomiarch will create, for example https://git.company.internal. Internal DNS must resolve it to the new appliance.' if managed else 'Use your existing internal GitHub Enterprise Server, for example https://git.company.internal. It must resolve to private network addresses.'), wraplength=820).pack(anchor='w', pady=5)
+            if not managed:
+                self.button('Choose public CA certificate…', self.choose_repository_ca)
+                self.button('Use this computer’s certificate trust', self.reset_repository_ca)
+                ttk.Label(self.content, textvariable=self.ca_status, wraplength=820).pack(anchor='w', pady=5)
         for label, var in [('GitHub owner', self.repo_owner), ('Repository name', self.repo_name), ('Human reviewer logins', self.approvers)]: self.entry(label, var)
-        row = ttk.Frame(self.content); row.pack(fill='x', pady=6)
-        ttk.Label(row, text='GitHub token', width=24).pack(side='left')
-        ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
-        ttk.Label(self.content, text='The token stays in this app’s memory. Repository creation needs administration access; later proposal access can be narrower. Your GitHub plan must support protected private branches.', wraplength=820).pack(anchor='w', pady=8)
+        if managed:
+            self.entry('GHES Azure VM size', self.ghes_vm_size)
+            ttk.Radiobutton(self.content, text='Enable GitHub Actions storage foundation', variable=self.ghes_actions, value='yes').pack(anchor='w', pady=4)
+            ttk.Radiobutton(self.content, text='Do not prepare GitHub Actions storage yet', variable=self.ghes_actions, value='no').pack(anchor='w', pady=4)
+            ttk.Label(self.content, text='Nomiarch will generate the private Azure GHES bootstrap. The GitHub licence, Management Console password, TLS private key and first administrator remain customer-controlled and are never written to Git.', wraplength=820).pack(anchor='w', pady=8)
+        else:
+            row = ttk.Frame(self.content); row.pack(fill='x', pady=6)
+            ttk.Label(row, text='GitHub token', width=24).pack(side='left')
+            ttk.Entry(row, textvariable=self.github_token, show='•').pack(side='left', fill='x', expand=True)
+            ttk.Label(self.content, text='The token stays in this app’s memory. Repository creation needs administration access; later proposal access can be narrower. Your GitHub plan must support protected private branches.', wraplength=820).pack(anchor='w', pady=8)
         if self.isolation.get() != 'disconnected':
             self.button('Repository access guide', lambda: webbrowser.open('https://nomiarch.com/docs/running/#customer-repository'))
         self.button('Continue', self.repository_continue, True)
@@ -115,14 +127,35 @@ class FoundationScreens:
         if repository['mode'] in scaffold.REVIEW_MODES:
             repository.update(owner=self.repo_owner.get().strip(), name=self.repo_name.get().strip(),
                               approvers=[a.strip().lstrip('@') for a in self.approvers.get().split(',') if a.strip()])
-        if repository['mode'] == 'github-enterprise':
+        if repository['mode'] in GHES_MODES:
             repository['server_url'] = server_origin(self.server_url.get().strip())
-            if self.repository_ca is not None: repository['ca_certificate'] = self.repository_ca
+            if repository['mode'] == GHES_MANAGED:
+                if not self.azure_ghes_image or not getattr(self, 'azure_subnet', None):
+                    raise NomiarchError('Choose the Azure subscription, region and private subnet before creating managed GHES settings')
+                repository['enterprise'] = {
+                    'hostname': urllib.parse.urlsplit(repository['server_url']).hostname,
+                    'sizing_profile': 'evaluation',
+                    'actions_enabled': self.ghes_actions.get() == 'yes',
+                    'image_urn': self.azure_ghes_image,
+                    'vm_size': self.ghes_vm_size.get().strip(),
+                    'subnet_id': self.azure_subnet,
+                }
+            elif self.repository_ca is not None:
+                repository['ca_certificate'] = self.repository_ca
         return scaffold.validate_repository(repository, self.usage.get(), self.isolation.get())
 
     def repository_continue(self):
-        try: self.token_scope = canonical(self.repository_settings())
-        except Exception as error: messagebox.showerror('Repository settings', str(error)); return
+        if self.repo_mode.get() == GHES_MANAGED:
+            try:
+                server_origin(self.server_url.get().strip())
+                if not self.repo_owner.get().strip() or not self.repo_name.get().strip() or not self.approvers.get().strip():
+                    raise NomiarchError('Enter the GitHub owner, repository and at least one human reviewer')
+            except Exception as error:
+                messagebox.showerror('Repository settings', str(error)); return
+            self.token_scope = None
+        else:
+            try: self.token_scope = canonical(self.repository_settings())
+            except Exception as error: messagebox.showerror('Repository settings', str(error)); return
         if self.target == 'azure': self.cloud_screen()
         else: self.prerequisites()
 
@@ -172,7 +205,11 @@ class FoundationScreens:
         self.button('Back', self.cloud_screen)
 
     def cloud_network(self, result):
-        self.azure_image, self.subnets = result['image'], result['subnets']
+        self.azure_image, self.azure_ghes_image, self.subnets = result['image'], result.get('ghes_image_urn'), result['subnets']
+        if self.repo_mode.get() == GHES_MANAGED and not self.azure_ghes_image:
+            messagebox.showerror('GitHub Enterprise Server', 'No GitHub Enterprise Server Azure appliance image was found in this region.')
+            self.cloud_account()
+            return
         self.clear('Private access to your system', 'Choose a subnet reachable through your organisation’s VPN or private network. The VM has no public IP. Azure platform dependencies remain; this is cloud isolation.', '03  Private network')
         if not self.subnets:
             ttk.Label(self.content, text='No eligible subnet was found in this region. Your cloud administrator must create a private administration route before this preview can install Core.', wraplength=820).pack(anchor='w', pady=10)
@@ -219,6 +256,9 @@ class FoundationScreens:
         self.button('Open configuration folder', lambda: service.open_folder(self.project_path))
         mode = value['repository']['mode']
         if mode in scaffold.REVIEW_MODES:
+            if mode == GHES_MANAGED:
+                ttk.Label(self.content, text='Bootstrap the private GHES appliance first, complete its customer-controlled licence/TLS/admin setup, and configure internal DNS. Then return here with a scoped token from that server; from this point the normal protected-branch review flow applies.', wraplength=820).pack(anchor='w', pady=10)
+                self.button('Open GHES bootstrap Terraform', lambda: service.open_folder(Path(self.project_path) / 'bootstrap' / 'ghes'))
             self.repository_token_entry(value['repository'])
             self.button('Create a NEW private customer repository', self.create_customer_repo)
             self.button('Open a configuration pull request', self.open_initial_pr)
