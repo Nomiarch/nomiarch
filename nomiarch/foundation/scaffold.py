@@ -169,7 +169,7 @@ def render(value, source):
         files[env + "/settings.auto.tfvars.json"] = json_text(public)
         if value["repository"]["mode"] == GHES_MANAGED:
             ghes_module = module / "modules" / "ghes"
-            for name in ("main.tf", "variables.tf", "outputs.tf"):
+            for name in ("main.tf", "variables.tf", "outputs.tf", "versions.tf"):
                 files["modules/ghes/" + name] = (ghes_module / name).read_text()
             enterprise = value["repository"]["enterprise"]
             files["bootstrap/ghes/.terraform.lock.hcl"] = (module / ".terraform.lock.hcl").read_text()
