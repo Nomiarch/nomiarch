@@ -127,6 +127,31 @@ def prepare_kit(folder, arch, online, progress=lambda *args: None, cancel=None):
     return paths
 
 
+def prepare_infrastructure_kit(folder, arch, online, progress=lambda *args: None, cancel=None):
+    """Admit only the infrastructure artifacts: the Ubuntu image and VM support.
+
+    No Core bundle, release key or model is read or required. Offline mode never
+    downloads; a missing or altered file fails closed.
+    """
+    name, sha = PINS[arch]['image']
+    path = Path(folder) / name
+    if online:
+        download(IMAGE_BASE + name, path, sha, progress, cancel)
+    elif not path.is_file() or digest(path) != sha:
+        raise NomiarchError(f'The admitted infrastructure kit needs the verified file {name}. Bring it through your transfer process; no download was attempted.')
+    paths = {'image': str(path.resolve())}
+    prerequisite = PREREQUISITES.get(platform.system())
+    if prerequisite:
+        url, sha, name = prerequisite
+        path = Path(folder) / name
+        if online:
+            download(url, path, sha, progress, cancel)
+        elif path.exists() and digest(path) != sha:
+            raise NomiarchError('VM support installer failed verification')
+        if path.is_file(): paths['vm_support'] = str(path.resolve())
+    return paths
+
+
 def install_vm_support(folder, progress, online=True, cancel=None):
     entry = PREREQUISITES.get(platform.system())
     if not entry:

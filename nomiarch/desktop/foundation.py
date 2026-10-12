@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
@@ -186,8 +187,9 @@ class FoundationScreens:
         ttk.Label(self.content, text='Ask your administrator for the management range (for example, 10.20.30.0/24). Only that range can open SSH administration sessions.', wraplength=820).pack(anchor='w', pady=10)
         def next_step():
             self.azure_subnet = self.subnets[box.current()]['id']
-            self.download_screen(False)
-        self.button('Continue to system files', next_step, True)
+            if getattr(self, 'flow', 'core') == 'infrastructure': self.infrastructure_review()
+            else: self.download_screen(False)
+        self.button('Review infrastructure configuration' if getattr(self, 'flow', 'core') == 'infrastructure' else 'Continue to system files', next_step, True)
         self.button('Back', self.cloud_account)
 
     def configuration(self):
@@ -214,16 +216,25 @@ class FoundationScreens:
 
     def scaffold_ready(self):
         value, _ = scaffold.load_supported(self.project_path, self.repo)
-        self.clear('Your configuration is ready', 'Review the folder before planning. Preparing a plan checks prerequisites and proposed resources; it does not create the VM.', '04  Review configuration')
+        infrastructure_only = scaffold.is_infrastructure(value)
+        runs = self.infrastructure_runs(value) if infrastructure_only else []
+        if infrastructure_only:
+            self.flow = 'infrastructure'
+            self.clear('Your infrastructure configuration is ready', 'Create the protected repository, open the configuration pull request, have the independent reviewer approve and merge it, then prepare the plan. The plan creates nothing; deployment needs your explicit approval of that exact plan.', '05  Repository and review')
+        else:
+            self.clear('Your configuration is ready', 'Review the folder before planning. Preparing a plan checks prerequisites and proposed resources; it does not create the VM.', '04  Review configuration')
         ttk.Label(self.content, text=str(self.project_path), wraplength=820).pack(anchor='w', pady=8)
         self.button('Open configuration folder', lambda: service.open_folder(self.project_path))
+        if infrastructure_only: self.infrastructure_status_block(runs)
         mode = value['repository']['mode']
         if mode in scaffold.REVIEW_MODES:
             self.repository_token_entry(value['repository'])
             self.button('Create a NEW private customer repository', self.create_customer_repo)
             self.button('Open a configuration pull request', self.open_initial_pr)
             self.entry('Approved, merged PR number', self.pull_number)
-            self.button('Prepare deployment plan', self.prepare_foundation, True)
+            if infrastructure_only:
+                ttk.Label(self.content, text='Required before planning: the nomiarch-validate check succeeded on the final commit, a designated reviewer other than the proposer approved that commit, and it was merged into protected main.', wraplength=820).pack(anchor='w', pady=4)
+            if not runs: self.button('Prepare deployment plan', self.prepare_foundation, True)
         elif mode == 'offline':
             ttk.Label(self.content, text='Export complete. Copy this folder into your review system. This mode does not verify approvals or deploy. For internal GitHub Enterprise Server, select its dedicated option when creating a configuration.', wraplength=820).pack(anchor='w', pady=12)
         else:
@@ -247,8 +258,13 @@ class FoundationScreens:
             self.pull_number.set(str(result['number']))
             self.status.set('Have a designated human review and merge this PR, then prepare the deployment plan.')
             webbrowser.open(result['url'])
-        self.start(lambda: GitHub(token, value['repository']).propose(value, files, 'Create Nomiarch foundation',
-                    'Review the customer settings, versioned recipe and approval/network policies. This PR creates no cloud or VM resources. Deployment requires a separate exact-plan approval in Nomiarch Setup.'), ready)
+        if scaffold.is_infrastructure(value):
+            title, body = 'Establish Nomiarch infrastructure foundation', ('Review the destination, network mode, capacity, approval/validation policies and the vendored validator. '
+                'The nomiarch-validate check runs without deployment credentials. This PR creates no VM or cloud resource and installs no application. '
+                'After an independent human approves the final commit and merges it, the separate human-operated controller prepares an exact plan that still needs explicit approval.')
+        else:
+            title, body = 'Create Nomiarch foundation', 'Review the customer settings, versioned recipe and approval/network policies. This PR creates no cloud or VM resources. Deployment requires a separate exact-plan approval in Nomiarch Setup.'
+        self.start(lambda: GitHub(token, value['repository']).propose(value, files, title, body), ready)
 
     def repository_check(self):
         value, _ = scaffold.load_supported(self.project_path, self.repo)
@@ -260,12 +276,16 @@ class FoundationScreens:
     def prepare_foundation(self):
         try: check = self.repository_check()
         except Exception as e: messagebox.showerror('Repository approval', str(e)); return
-        folder, paths = Path(self.project_path), dict(self.paths)
+        folder = Path(self.project_path)
+        current, _ = scaffold.load_supported(folder, self.repo)
+        paths = dict(self.infrastructure_paths) if scaffold.is_infrastructure(current) else dict(self.paths or {})
         def task():
             value, snapshot = scaffold.load_supported(folder, self.repo)
             if check: check(value, snapshot)
-            if value['configuration']['target'] == 'local': service.preflight()
-            else: cloud.tools_ready(self.root_dir, self.repo, self.download_progress)
+            target = value['configuration']['target']
+            if target == 'local': service.preflight()
+            elif target == 'azure': cloud.tools_ready(self.root_dir, self.repo, self.download_progress)
+            elif not shutil.which('ssh'): raise NomiarchError('OpenSSH client is required to adopt an on-premises host')
             return deployment.prepare(folder, self.state_dir, self.repo, paths)
         self.start(task, self.show_foundation_plan)
 
@@ -274,10 +294,12 @@ class FoundationScreens:
         record = result['plan']
         self.clear('Review what will be created', 'Approval applies only to this plan. A changed setting, release file or plan requires a fresh review. Plans expire after one hour.', '05  Human approval')
         summary = record['summary']; capacity = summary['capacity']
-        lines = [('System', summary['system']), ('Location', 'This computer' if summary['destination'] == 'local' else 'Microsoft Azure'),
+        lines = [('System', summary['system']), ('Location', {'local': 'This computer', 'azure': 'Microsoft Azure', 'existing': 'On-premises host (adopted; not created)'}[summary['destination']]),
                  ('Organisation / environment', summary['organisation'] + ' / ' + summary['environment']),
                  ('Size', f"{capacity['cpus']} CPUs · {capacity['memory_gib']} GB memory · {capacity['disk_gib']} GB disk"),
-                 ('Network', summary['network']), ('Resources', summary['charges'])]
+                 ('Action', summary.get('action', '')), ('Network', summary['network']), ('Resources', summary['charges'])]
+        if summary.get('scope') == 'infrastructure':
+            lines += [('Downtime', summary.get('downtime', '')), ('Application', summary.get('application', '')), ('Executor', summary.get('executor', ''))]
         for label, value in lines:
             ttk.Label(self.content, text=label + ': ' + value, wraplength=820).pack(anchor='w', pady=5)
         if summary.get('resources'):
@@ -286,7 +308,7 @@ class FoundationScreens:
             ttk.Label(self.content, text='Resource group: ' + summary['resource_group'], wraplength=820).pack(anchor='w', pady=4)
             ttk.Label(self.content, text=f"The saved Terraform plan lists {len(summary['resources'])} resource actions.").pack(anchor='w', pady=4)
         ttk.Label(self.content, text='Plan reference: ' + record['digest'][:16]).pack(anchor='w', pady=6)
-        self.button('Approve this plan and create the system', self.apply_foundation, True)
+        self.button('Approve this plan and establish the infrastructure' if summary.get('scope') == 'infrastructure' else 'Approve this plan and create the system', self.apply_foundation, True)
         self.button('View full plan details', lambda: self.plan_details(record['summary']))
         self.button('Back to configuration', self.scaffold_ready)
 
@@ -313,6 +335,19 @@ class FoundationScreens:
             self.project_path, self.target = Path(path), value['configuration']['target']
             self.isolation.set(value['isolation']); self.mode.set('offline' if value['isolation'] == 'disconnected' else 'online')
         except Exception as e: messagebox.showerror('Open configuration', str(e)); return
+        if scaffold.is_infrastructure(value):
+            self.flow = 'infrastructure'
+            self.location.set(value['destination']['location']); self.provider.set(value['destination']['provider'])
+            self.git_service.set(value['repository']['mode']); self.repo_mode.set(value['repository']['mode'])
+            self.network_mode.set(scaffold.destinations.network_mode_of(value['isolation']))
+            self.infrastructure_paths = {}
+            if self.target == 'existing':
+                key = filedialog.askopenfilename(title='Choose the SSH private key for the adopted host')
+                hosts = filedialog.askopenfilename(title='Choose the known_hosts file with the enrolled host key') if key else ''
+                if key and hosts: self.infrastructure_paths = {'ssh_key': key, 'known_hosts': hosts}
+                self.scaffold_ready(); return
+            if self.target == 'azure':
+                self.scaffold_ready(); return
         self.resume_after_files = True
         self.download_screen(False)
 
@@ -322,6 +357,9 @@ class FoundationScreens:
         directory, run = self.records[index]
         if not run.get('foundation'):
             messagebox.showinfo('Customer configuration', 'This installation predates customer scaffolds. Its existing maintenance actions remain available.'); return
+        if run['foundation'].get('scope') == 'infrastructure':
+            messagebox.showinfo('Infrastructure only', 'No application is installed on this foundation, so there is nothing for Core to observe yet. The infrastructure status screen shows the recorded state.')
+            self.infrastructure_status_screen(directory); return
         self.managed_foundation = directory
         self.project_path = Path(run['foundation']['project_directory'])
         value, _ = scaffold.load_supported(self.project_path, self.repo)

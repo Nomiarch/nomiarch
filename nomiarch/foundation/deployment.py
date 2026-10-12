@@ -12,7 +12,7 @@ from nomiarch.bootstrap import bundle, controller
 from nomiarch.bootstrap.config import files_preflight, require, validate
 from nomiarch.bootstrap.providers import get_provider
 from nomiarch.common import NomiarchError, Runner, atomic_write, canonical, digest, file_lock, private_dir, read_json, write_json
-from . import network, scaffold
+from . import infrastructure, network, scaffold
 
 
 def fingerprint(value):
@@ -70,15 +70,97 @@ def inputs(directory):
             raise NomiarchError('Symlinks are not accepted in deployment inputs')
         if not p.is_file() or any(x in rel.parts for x in ('logs', '.terraform')): continue
         if (p.suffix in {'.tf', '.tfplan'} or p.name.endswith('.tfvars.json')
-                or p.name in {'.terraform.lock.hcl', 'ssh-host', 'ssh-host.pub', 'ssh-client', 'ssh-client.pub'}):
+                or p.name in {'.terraform.lock.hcl', 'ssh-host', 'ssh-host.pub', 'ssh-client', 'ssh-client.pub', 'known_hosts'}):
             files[rel.as_posix()] = digest(p)
     return files
+
+
+def admit_private_file(source, destination, mode=0o600):
+    """Copy user-supplied private material into the run directory; never into Git."""
+    source = Path(source).expanduser()
+    require(source.is_file(), 'Missing file: ' + str(source))
+    shutil.copyfile(source, destination)
+    destination.chmod(mode)
+    return str(destination.resolve())
+
+
+def prepare_infrastructure(project_dir, state_dir, source, paths, value, snapshot, *, factory=get_provider):
+    """Plan infrastructure only. No Core bundle, model or inference artifact is read or required."""
+    config = copy.deepcopy(value['configuration'])
+    paths = dict(paths or {})
+    for forbidden in ('bundle', 'key'):
+        require(forbidden not in paths, 'Infrastructure-only planning does not accept Core release files')
+    duplicates = infrastructure.existing_runs(state_dir, value['id'])
+    if duplicates:
+        raise NomiarchError('This foundation already has a retained run (' + str(duplicates[0]['phase']) + ') at ' + duplicates[0]['run_directory']
+                            + '. Open Manage to inspect, recover or remove it before planning again; planning again would create duplicate resources.')
+    if config['target'] == 'local':
+        require(paths.get('image'), 'Select the admitted Ubuntu 24.04 image before planning')
+        require(config['local']['image_sha256'] == scaffold.PINS[config['architecture']]['image'][1], 'Use the matching desktop recipe for this Ubuntu image')
+        config['local']['image'] = str(Path(paths['image']).resolve())
+    elif config['target'] == 'existing':
+        require(paths.get('ssh_key') and paths.get('known_hosts'), 'Select the SSH private key and the out-of-band enrolled known_hosts file for the adopted host')
+        config['existing']['ssh_key'], config['existing']['known_hosts'] = str(Path(paths['ssh_key']).resolve()), str(Path(paths['known_hosts']).resolve())
+    else:
+        require(bool(config['azure'].get('subnet_id')), 'Azure setup needs a private administration route and an existing subnet. The scaffold can also be exported for your cloud administrator.')
+    validate(config)
+    directory, run = controller.new_run(config, state_dir, 'infrastructure')
+    try:
+        artifacts = {}
+        if config['target'] == 'local':
+            frozen = freeze({'image': paths['image']}, {'image': config['local']['image_sha256']}, directory / 'admitted')
+            config['local']['image'] = frozen['image']
+            artifacts['image'] = {'path': frozen['image'], 'sha256': config['local']['image_sha256']}
+        elif config['target'] == 'existing':
+            config['existing']['ssh_key'] = admit_private_file(paths['ssh_key'], directory / 'ssh-client')
+            config['existing']['known_hosts'] = admit_private_file(paths['known_hosts'], directory / 'known_hosts')
+            require(any(line.split() and config['existing']['host'] in line.split()[0].split(',') for line in Path(config['existing']['known_hosts']).read_text().splitlines()
+                        if line.strip() and not line.startswith('#') and not line.startswith('|')),
+                    'known_hosts does not contain an enrolled key for ' + config['existing']['host'] + '. Hashed entries are not accepted; enroll the host key out of band.')
+        else:
+            from .ssh_keys import generate
+            key = generate(directory / 'ssh-client')
+            config['azure']['ssh_key'], config['azure']['ssh_public_key'] = str(key), str(key) + '.pub'
+        files_preflight(config)
+        run['foundation'] = {'id': value['id'], 'project_directory': str(Path(project_dir).resolve()),
+                             'snapshot': snapshot, 'isolation': value['isolation'], 'scope': 'infrastructure'}
+        run['application'] = {'status': 'not-installed', 'note': 'Infrastructure-only bootstrap; application installation is a separate later operation'}
+        provider = factory(config, run, directory, Runner(log_dir=directory / 'logs'), source)
+        provider.prepare()  # Read-only checks and a saved plan; no resource is created or changed.
+        summary = infrastructure.summary(config, value, run['prefix'])
+        if config['target'] == 'azure':
+            raw = provider.command(['tofu', 'show', '-json', 'apply.tfplan'], cwd=directory / 'infra', timeout=120)
+            import json
+            tf = json.loads(raw)
+            summary['azure'] = {k: v for k, v in config['azure'].items() if k not in {'ssh_key', 'ssh_public_key'}}
+            summary['resource_group'] = run['prefix'] + '-rg'
+            summary['resources'] = [{'address': r['address'], 'actions': r['change']['actions'],
+                                     'planned': public_plan(r['change'].get('after'), r['change'].get('after_sensitive', False))}
+                                    for r in tf.get('resource_changes', [])]
+            require(all(r['actions'] in (['create'], ['no-op'], ['read']) for r in summary['resources']), 'Initial plan unexpectedly changes existing resources')
+        elif config['target'] == 'existing':
+            summary['preflight'] = run.get('preflight')
+        record = {'schema': 1, 'scope': 'infrastructure', 'run_id': run['id'], 'configuration': config, 'snapshot': snapshot,
+                  'project_directory': str(Path(project_dir).resolve()), 'inputs': inputs(directory), 'artifacts': artifacts,
+                  'created': time.time(), 'expires': time.time() + 3600, 'summary': summary}
+        record['digest'] = fingerprint(record)
+        record['seal'] = sign(state_dir, record)
+        write_json(directory / 'plan.json', record)
+        run['phase'] = 'awaiting-approval'
+        controller.save(directory, run)
+        return {'run_directory': str(directory), 'plan': record}
+    except BaseException:
+        run['phase'] = 'planning-failed'
+        controller.save(directory, run)
+        raise
 
 
 def prepare(project_dir, state_dir, source, paths, *, factory=get_provider):
     value, snapshot = scaffold.load_supported(project_dir, source)
     require(value['repository']['mode'] != 'offline',
             'This configuration uses export-only review. Create a configuration with a supported repository integration before deployment.')
+    if scaffold.is_infrastructure(value):
+        return prepare_infrastructure(project_dir, state_dir, source, paths, value, snapshot, factory=factory)
     config = copy.deepcopy(value['configuration'])
     require(value['runtime'] == scaffold.admitted_runtime(config['architecture']), 'Use the matching desktop release for these Core pins, or generate a configuration for this app’s admitted release')
     if config['target'] == 'local': config['local']['image'] = str(Path(paths['image']).resolve())
@@ -179,6 +261,8 @@ def apply(directory, source, expected_digest, *, repository_check=None, factory=
         write_json(directory / 'approval.json', evidence)
         if 'repository' in evidence: run['foundation']['repository_commit'] = evidence['repository']['merge']
         provider = factory(run['config'], run, directory, Runner(deadline=time.time() + 7200, log_dir=directory / 'logs'), source)
+        if record.get('scope') == 'infrastructure':
+            return apply_infrastructure(directory, run, record, provider)
         run['phase'], run['creation_started'] = 'creating', True
         controller.save(directory, run)
         try:
@@ -202,3 +286,45 @@ def apply(directory, source, expected_digest, *, repository_check=None, factory=
             controller.save(directory, run)
             write_json(directory / 'report.json', run)
         return {'run_directory': str(directory), 'validation': run['validation'], 'cleanup': run['cleanup'], 'inventory': run['inventory']}
+
+
+def apply_infrastructure(directory, run, record, provider):
+    """Execute the approved infrastructure plan exactly once. Nothing is installed on the host."""
+    require(run['scope'] == 'infrastructure' and run['foundation'].get('scope') == 'infrastructure', 'Run scope does not match the approved plan')
+    run['phase'], run['creation_started'] = 'creating', True
+    controller.save(directory, run)
+    try:
+        run['inventory'] = provider.provision()  # Never re-plan after approval.
+        run['phase'] = 'provisioned'
+        controller.save(directory, run)
+        checks = infrastructure.verify(provider, run['config'], run['foundation']['isolation'])
+        run['validation'] = {'status': 'passed', 'scope': 'infrastructure', 'checks': checks}
+        run['application'] = {'status': 'not-installed', 'note': 'Infrastructure ready. Core, models, agents and containers are installed by a later reviewed operation.'}
+        run['phase'] = 'infrastructure-ready'
+    except BaseException as e:
+        run['validation'] = {'status': 'failed', 'scope': 'infrastructure', 'error': str(e)}
+        run['phase'] = 'failed'
+        run['recovery'] = {'retained': ['run.json', 'plan.json', 'approval.json', 'logs/', 'infra/ (state, if any)'],
+                           'instruction': 'Nothing was deleted. Inspect logs and inventory, then use Manage to retry verification or prepare a separately approved removal. '
+                                          'Adopted hosts are never deleted. Planning a new run is refused while this run is retained.'}
+    finally:
+        controller.save(directory, run)
+        write_json(directory / 'report.json', run)
+    return {'run_directory': str(directory), 'validation': run['validation'], 'cleanup': run['cleanup'],
+            'inventory': run['inventory'], 'application': run['application'], 'phase': run['phase']}
+
+
+def verify_infrastructure(directory, source, *, factory=get_provider):
+    """Re-run the infrastructure checks against the recorded host. Read-only; nothing is installed or changed."""
+    directory = Path(directory).resolve()
+    with file_lock(directory / 'controller.lock', blocking=False):
+        run = read_json(directory / 'run.json')
+        require(run.get('scope') == 'infrastructure' and run.get('inventory') and run['cleanup'].get('status') != 'deleted', 'This run has no retained infrastructure to verify')
+        _, snapshot = scaffold.load_supported(run['foundation']['project_directory'], source)
+        require(snapshot == run['foundation']['snapshot'], 'The reviewed configuration changed outside the review workflow')
+        provider = factory(run['config'], run, directory, Runner(log_dir=directory / 'logs'), source)
+        checks = infrastructure.verify(provider, run['config'], run['foundation']['isolation'], configure_network=False)
+        result = {'validation': {'status': 'passed', 'scope': 'infrastructure', 'checks': checks}, 'application': run.get('application'),
+                  'run_directory': str(directory), 'time': time.time()}
+        write_json(directory / 'verification.json', result)
+        return result

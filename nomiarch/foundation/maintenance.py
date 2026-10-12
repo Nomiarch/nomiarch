@@ -33,6 +33,10 @@ def propose(directory, source, action, archive=None, key=None):
     value, snapshot = scaffold.load_supported(run['foundation']['project_directory'], source)
     require(snapshot == run['foundation']['snapshot'], 'Installed configuration changed outside the review workflow')
     value.pop('reconciliation', None)
+    if scaffold.is_infrastructure(value):
+        require(action == 'destroy', 'No application is installed on this infrastructure-only foundation; upgrade and repair belong to the later application milestone')
+        require(archive is None and key is None, 'Removal does not take release files')
+        require(value['configuration']['target'] != 'existing', 'Adopted on-premises hosts are never deleted by Nomiarch; retire the controller record instead')
     if action == 'upgrade':
         manifest = bundle.inspect(archive, key)
         require(manifest['architecture'] == value['configuration']['architecture'], 'Release architecture differs from this installation')
@@ -84,7 +88,8 @@ def prepare(directory, project_directory, source, archive=None, key=None, recipi
                 provider.assert_cleanup_scope(provider.az(['group', 'show', '--name', group]), provider.az(['resource', 'list', '--resource-group', group]))
         else: provider.verify()
         summary = {'action': action, 'system': run['config']['name'], 'target': run['config']['target'], 'vm': run['prefix'],
-                   'from_release': previous['runtime']['core_version'], 'to_release': candidate['runtime']['core_version'],
+                   'from_release': previous.get('runtime', {}).get('core_version', 'not installed'), 'to_release': candidate.get('runtime', {}).get('core_version', 'not installed'),
+                   'scope': 'infrastructure' if scaffold.is_infrastructure(candidate) else 'core',
                    'downtime': action in {'upgrade', 'repair'}, 'deletes_vm_and_disks': action == 'destroy',
                    'encrypted_backup_before_change': action == 'upgrade', 'recipe': candidate['recipe_version']}
         record = {'schema': 1, 'run_id': run['id'], 'prefix': run['prefix'], 'operation_id': change_dir.name,

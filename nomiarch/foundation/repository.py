@@ -80,11 +80,20 @@ class GitHub:
     def repository_url(self, value):
         return self.origin + self.root(value)[len('/repos'):]
 
+    def required_checks(self, value):
+        """Infrastructure recipes require the trusted validation check on the exact head commit."""
+        if not scaffold.is_infrastructure(value):
+            return None  # Core-era recipes keep their original protection contract.
+        check = {'context': scaffold.VALIDATION_CHECK}
+        if value['repository']['mode'] == 'github':
+            check['app_id'] = scaffold.GITHUB_ACTIONS_APP_ID
+        return {'strict': True, 'checks': [check]}
+
     def protect(self, value):
         # Only the separate human setup flow calls this administration operation.
         root = self.root(value)
         self.call(root + '/branches/main/protection', {
-            'required_status_checks': None, 'enforce_admins': True,
+            'required_status_checks': self.required_checks(value), 'enforce_admins': True,
             'required_pull_request_reviews': {'dismiss_stale_reviews': True, 'require_code_owner_reviews': True,
                                              'required_approving_review_count': 1, 'require_last_push_approval': True},
             'restrictions': None, 'allow_force_pushes': False, 'allow_deletions': False,
@@ -97,6 +106,14 @@ class GitHub:
                 and review.get('require_code_owner_reviews') and review.get('required_approving_review_count', 0) >= 1
                 and review.get('require_last_push_approval') and not p.get('allow_force_pushes', {}).get('enabled')
                 and not p.get('allow_deletions', {}).get('enabled'), 'Required human branch protection is missing or weakened')
+        required = self.required_checks(value)
+        if required:
+            status = p.get('required_status_checks') or {}
+            checks = {c.get('context'): c for c in status.get('checks') or []} if status.get('checks') is not None else {c: {} for c in status.get('contexts') or []}
+            expected = required['checks'][0]
+            require(status.get('strict') is True and expected['context'] in checks
+                    and ('app_id' not in expected or checks[expected['context']].get('app_id') == expected['app_id']),
+                    'The required trusted validation check is missing or weakened on main')
 
     def main_head(self, value):
         self.assert_protection(value)
@@ -182,4 +199,34 @@ class GitHub:
                     and login != pull['user']['login'].lower()]
         require(accepted, 'A designated human other than the proposer must approve the exact final PR commit')
         require(not any(r['state'] == 'CHANGES_REQUESTED' for login, r in latest.items() if login in allowed), 'A designated reviewer still requests changes')
-        return {'server': self.origin, 'repository': root[len('/repos/'):], 'pull_request': number, 'head': head, 'merge': current, 'human_reviewers': sorted(accepted)}
+        proof = {'server': self.origin, 'repository': root[len('/repos/'):], 'pull_request': number, 'head': head, 'merge': current, 'human_reviewers': sorted(accepted)}
+        if scaffold.is_infrastructure(value):
+            proof['validation'] = self.validated(value, root, head)
+        return proof
+
+    def validated(self, value, root, head):
+        """The trusted validation check must have completed successfully for the exact reviewed commit.
+
+        Only check runs created by the GitHub Actions app count; a status posted with a
+        user token, a run for another commit or an unfinished/failed run is rejected.
+        The merged tree is separately compared with the admitted recipe, so a workflow
+        edited inside the proposal cannot stand in for the recipe's validator.
+        """
+        result = self.call(root + '/commits/' + head + '/check-runs?check_name=' + scaffold.VALIDATION_CHECK + '&per_page=100')
+        runs = result.get('check_runs') if isinstance(result, dict) else None
+        require(isinstance(runs, list), 'Unexpected check-run response from the repository')
+        trusted = []
+        for run in runs:
+            app = run.get('app') or {}
+            if run.get('name') != scaffold.VALIDATION_CHECK or run.get('head_sha') != head or app.get('slug') != 'github-actions':
+                continue
+            if value['repository']['mode'] == 'github' and app.get('id') != scaffold.GITHUB_ACTIONS_APP_ID:
+                continue
+            trusted.append(run)
+        require(trusted, 'The trusted ' + scaffold.VALIDATION_CHECK + ' check has not run for the reviewed commit; a check for another commit or from another source is not accepted')
+        trusted.sort(key=lambda r: (r.get('completed_at') or '', r.get('id') or 0))
+        latest = trusted[-1]
+        require(latest.get('status') == 'completed', 'The trusted validation check has not completed for the reviewed commit')
+        require(latest.get('conclusion') == 'success', 'The trusted validation check did not succeed for the reviewed commit: ' + str(latest.get('conclusion')))
+        return {'check': scaffold.VALIDATION_CHECK, 'app': 'github-actions', 'app_id': (latest.get('app') or {}).get('id'),
+                'head_sha': head, 'completed_at': latest.get('completed_at'), 'check_run_id': latest.get('id'), 'url': latest.get('html_url')}
