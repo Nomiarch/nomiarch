@@ -158,7 +158,8 @@ class App(InfrastructureScreens, FoundationScreens, tk.Tk):
             except Exception as e: messagebox.showerror('Windows setup',str(e))
 
     def download_screen(self, kit_only=False):
-        self.clear('Get the system files', 'Downloads are checked automatically against the trusted catalog included in this app. Completed verified files are reused when you retry.', '01  Computer    /    02  Files    /    03  Review    /    04  Install')
+        infrastructure_only = getattr(self, 'flow', 'core') == 'infrastructure' and not kit_only
+        self.clear('Get the infrastructure files' if infrastructure_only else 'Get the system files', 'Downloads are checked automatically against the trusted catalog included in this app. Completed verified files are reused when you retry.', '01  Computer    /    02  Files    /    03  Review    /    04  Install')
         self.kit_only = kit_only
         if not kit_only:
             if self.isolation.get() != 'disconnected':
@@ -376,6 +377,11 @@ class App(InfrastructureScreens, FoundationScreens, tk.Tk):
 
 
 def main():
+    if '--network-self-test' in sys.argv:
+        from .network_selftest import run
+        output = Path(sys.argv[sys.argv.index('--network-self-test') + 1])
+        output.write_text(json.dumps(run(), sort_keys=True) + '\n')
+        return
     if '--self-test' in sys.argv:
         import tempfile
         with tempfile.TemporaryDirectory() as folder:

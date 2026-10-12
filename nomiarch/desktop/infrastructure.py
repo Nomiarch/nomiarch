@@ -163,7 +163,7 @@ class InfrastructureScreens:
             local_architecture = service.architecture() if self.target == 'local' else None
             self.infrastructure_architecture = setup_flow.architecture_for(self.location.get(), self.provider.get(), local_architecture, self.host_architecture.get())
         except Exception as error: messagebox.showerror('Check the settings', str(error)); return
-        if self.target == 'local': self.download_screen(False)
+        if self.target == 'local': self.prerequisites()
         elif self.target == 'azure': self.cloud_screen()
         else: self.infrastructure_review()
 

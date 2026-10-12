@@ -172,6 +172,8 @@ class SetupScreenTests(unittest.TestCase):
         app.name.set('local-vm'); app.cpus.set('2'); app.memory.set('8'); app.disk.set('40')
         app.infrastructure_settings_continue()
         self.assertEqual(app.flow, 'infrastructure')
+        self.assertIn('Install VM support', self.buttons())
+        self.buttons()['Continue'].invoke()
         app.kit.set(str(self.root)); app.mode.set('offline')
         with patch('nomiarch.desktop.service.prepare_kit', side_effect=AssertionError('Core kit must not be used')), \
              patch('nomiarch.desktop.app.bundle.inspect', side_effect=AssertionError('bundle must not be inspected')), \
@@ -207,6 +209,7 @@ class SetupScreenTests(unittest.TestCase):
         self.choose_destination('local', 'github', 'restricted-connected')
         app = self.app
         app.cpus.set('2'); app.memory.set('8'); app.disk.set('40'); app.infrastructure_settings_continue()
+        self.buttons()['Continue'].invoke()
         app.kit.set(str(self.root)); app.mode.set('offline')
         with patch('nomiarch.desktop.service.platform.system', return_value='Linux'): app.prepare()
         app.make_infrastructure_scaffold(); app.pull_number.set('7'); app.prepare_foundation()
@@ -229,6 +232,7 @@ class SetupScreenTests(unittest.TestCase):
         self.choose_destination('local', 'github-enterprise', 'fully-disconnected')
         app = self.app
         app.cpus.set('2'); app.memory.set('8'); app.disk.set('40'); app.infrastructure_settings_continue()
+        self.buttons()['Continue'].invoke()
         empty = self.root / 'empty'; empty.mkdir()
         app.kit.set(str(empty)); app.mode.set('offline')
         with patch('urllib.request.urlopen') as network, patch('nomiarch.desktop.service.platform.system', return_value='Linux'):

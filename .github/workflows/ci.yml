@@ -23,7 +23,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/.nomiarch/ci-tools" >> "$GITHUB_PATH"
       - name: Python behavior, artifact admission, and encrypted recovery
         run: |
-          python3 -m pip install cryptography==45.0.7
+          python3 -m pip install cryptography==45.0.7 truststore==0.10.4
           python3 -m unittest discover -s tests -v
       - name: Path portability (symlinked temporary directory, as on macOS)
         run: |

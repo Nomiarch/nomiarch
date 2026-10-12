@@ -4,6 +4,7 @@ Runs inside the packaged desktop app (`--self-test`) on every supported platform
 a missing bundled resource fails the build rather than the first customer setup.
 No VM, host, cloud resource, repository or network connection is used.
 """
+import copy
 import contextlib
 import io
 import json
@@ -25,13 +26,30 @@ INTERNAL = {'mode': 'github-enterprise', 'server_url': 'https://git.company.inte
 
 def cases():
     base = {'api_version': 'nomiarch.io/v1alpha1', 'capacity': {'cpus': 2, 'memory_gib': 8, 'disk_gib': 40}}
-    return [
+    examples = [
         ('local', dict(base, name='self-test-local', target='local', architecture='amd64',
                        local={'image': '/kit/ubuntu.img', 'image_sha256': PINS['amd64']['image'][1]}), GITHUB, 'restricted-connected'),
         ('existing', dict(base, name='self-test-host', target='existing', architecture='arm64',
                           existing={'host': 'host.site.internal', 'ssh_user': 'nomiarch', 'ssh_key': '/private/key', 'known_hosts': '/private/known_hosts'}), INTERNAL, 'fully-disconnected'),
         ('azure', dict(base, name='self-test-cloud', target='azure', architecture='amd64', azure=AZURE), GITHUB, 'restricted-connected'),
     ]
+
+    result = list(examples)
+    seen = {(c['target'], c['architecture'], repo['mode'], mode) for _, c, repo, mode in result}
+    for _, template, _, _ in examples:
+        for arch in (('amd64',) if template['target'] == 'azure' else ('amd64', 'arm64')):
+            for repository in (GITHUB, INTERNAL):
+                for mode in ('restricted-connected', 'fully-disconnected'):
+                    if mode == 'fully-disconnected' and (template['target'] == 'azure' or repository['mode'] == 'github'):
+                        continue
+                    key = (template['target'], arch, repository['mode'], mode)
+                    if key in seen: continue
+                    seen.add(key)
+                    config = copy.deepcopy(template)
+                    config['architecture'] = arch
+                    if config['target'] == 'local': config['local']['image_sha256'] = PINS[arch]['image'][1]
+                    result.append(('-'.join(key), config, repository, mode))
+    return result
 
 
 def run_validator(folder):

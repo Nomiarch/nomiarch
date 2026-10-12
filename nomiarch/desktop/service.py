@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+from nomiarch.tls import default_context
 
 from nomiarch.common import NomiarchError, Runner, digest, private_dir
 from .catalog import BASE, IMAGE_BASE, PINS, PREREQUISITES
@@ -80,7 +81,7 @@ def download(url, destination, expected, progress=lambda *args: None, cancel=Non
     part = destination.with_name(destination.name + '.part')
     try:
         req = urllib.request.Request(url, headers={'User-Agent':'Nomiarch-Setup/0.1'})
-        with urllib.request.urlopen(req, timeout=45) as response, part.open('wb') as output:
+        with urllib.request.urlopen(req, timeout=45, context=default_context()) as response, part.open('wb') as output:
             if not response.url.startswith('https://'):
                 raise NomiarchError('Insecure download redirect')
             total = int(response.headers.get('Content-Length', 0))

@@ -2,3 +2,4 @@ pyinstaller==6.22.3
 cryptography==45.0.7
 bech32==1.2.0
 pillow==11.3.0
+truststore==0.10.4
