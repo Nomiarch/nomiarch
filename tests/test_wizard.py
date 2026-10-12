@@ -65,7 +65,7 @@ class MaintenanceWizardTests(unittest.TestCase):
                  patch('nomiarch.bootstrap.wizard.bundle.inspect', return_value={'version': '0.1.0.dev2', 'architecture': 'amd64', 'manifest_sha256': 'a' * 64}):
                 self.assertEqual(maintain('upgrade', directory, directory), {'upgraded': True})
             self.assertEqual([x['action'] for x in seen], ['status', 'upgrade'])
-            self.assertEqual(seen[-1]['run'], directory)
+            self.assertEqual(seen[-1]['run'], str(Path(directory).resolve()))  # the wizard selects the canonical run path
             self.assertTrue(seen[-1]['backup_recipient'].startswith('age1'))
 
     def test_cancel_verify_does_not_execute_task(self):

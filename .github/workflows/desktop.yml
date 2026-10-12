@@ -1,7 +1,7 @@
 name: Desktop wizard
 on:
   pull_request:
-    paths: ['nomiarch/**', 'desktop/**', 'tests/test_desktop.py', 'tests/test_foundation.py', 'tests/test_internal_repository.py', 'tests/fixtures/**', '.github/workflows/desktop.yml']
+    paths: ['nomiarch/**', 'desktop/**', 'tests/**', '.github/workflows/desktop.yml']
   push:
     branches: [main]
     paths: ['nomiarch/desktop/**', 'nomiarch/foundation/**', 'desktop/**', '.github/workflows/desktop.yml']
@@ -43,6 +43,9 @@ jobs:
           python -m unittest discover -s tests -p test_desktop.py -v
           python -m unittest discover -s tests -p test_foundation.py -v
           python -m unittest discover -s tests -p test_internal_repository.py -v
+          python -m unittest discover -s tests -p test_infrastructure.py -v
+          python -m unittest discover -s tests -p test_setup_screens.py -v
+          python -m unittest discover -s tests -p test_wizard.py -v
       - name: Package Microsoft Azure sign-in helper
         run: python -m PyInstaller --noconfirm --clean --onedir --console --name az --distpath cloud-tools --collect-all azure.cli.core --collect-all azure.cli.command_modules.util --collect-all azure.cli.command_modules.lab --collect-all azure.cli.command_modules.profile --collect-all azure.cli.command_modules.vm --collect-all azure.cli.command_modules.network --collect-all azure.cli.command_modules.privatedns --collect-all azure.cli.command_modules.resource --collect-submodules azure.mgmt.compute --collect-submodules azure.mgmt.resource --collect-submodules azure.mgmt.core --collect-submodules azure.mgmt.authorization --collect-all msal --copy-metadata azure-cli --copy-metadata azure-cli-core --copy-metadata azure-cli-telemetry desktop/azure_helper.py
       - name: Verify packaged Microsoft helper
@@ -61,7 +64,7 @@ jobs:
               f.write('version='+DESKTOP_VERSION+'\n')
           PY
       - name: Package native desktop app
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra --add-data cloud-tools:cloud-tools desktop/launcher.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra --add-data cloud-tools:cloud-tools --add-data nomiarch/foundation/customer_validator.py:nomiarch/foundation desktop/launcher.py
       - name: Test packaged Windows screens
         if: runner.os == 'Windows'
         shell: pwsh
@@ -70,12 +73,13 @@ jobs:
           Start-Process -FilePath '.\dist\NomiarchSetup.exe' -ArgumentList @('--self-test', $result) -Wait
           if (!(Test-Path $result)) { throw 'Packaged desktop screen test failed' }
           Get-Content $result
+          if (!(Select-String -Path $result -Pattern 'Packaged scaffold acceptance' -Quiet)) { throw 'Packaged scaffold acceptance missing' }
       - name: Test packaged macOS screens
         if: runner.os == 'macOS'
-        run: dist/NomiarchSetup.app/Contents/MacOS/NomiarchSetup --self-test desktop-test.txt && cat desktop-test.txt
+        run: dist/NomiarchSetup.app/Contents/MacOS/NomiarchSetup --self-test desktop-test.txt && cat desktop-test.txt && grep -q 'Packaged scaffold acceptance' desktop-test.txt
       - name: Test packaged Linux screens
         if: runner.os == 'Linux'
-        run: xvfb-run -a dist/NomiarchSetup --self-test desktop-test.txt && cat desktop-test.txt
+        run: xvfb-run -a dist/NomiarchSetup --self-test desktop-test.txt && cat desktop-test.txt && grep -q 'Packaged scaffold acceptance' desktop-test.txt
       - uses: actions/upload-artifact@v4
         with:
           name: screen-${{ matrix.name }}

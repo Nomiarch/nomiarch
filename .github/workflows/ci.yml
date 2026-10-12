@@ -25,6 +25,10 @@ jobs:
         run: |
           python3 -m pip install cryptography==45.0.7
           python3 -m unittest discover -s tests -v
+      - name: Path portability (symlinked temporary directory, as on macOS)
+        run: |
+          mkdir -p "$RUNNER_TEMP/real-tmp" && ln -s "$RUNNER_TEMP/real-tmp" "$RUNNER_TEMP/link-tmp"
+          TMPDIR="$RUNNER_TEMP/link-tmp" python3 -m unittest discover -s tests
       - name: Local service integration
         run: python3 -m nomiarch dev demo
       - name: Policy enforcement

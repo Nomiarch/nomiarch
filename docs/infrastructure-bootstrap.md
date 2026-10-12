@@ -63,12 +63,13 @@ plans → explicit plan approval → execution → verification and audit record
 | --- | --- |
 | A PR never deploys | Only the controller (`deployment.apply`) executes, after `validate_plan` and an explicit approval of the displayed plan digest. |
 | Validation has no deployment credentials | The workflow runs with `permissions: contents: read`; the validator reads files only. |
-| Trusted check bound to the reviewed commit | `GitHub.approved` requires a completed, successful `nomiarch-validate` check run created by the GitHub Actions app for the exact PR head SHA. Missing, failed, unfinished, stale (other commit) or other-source runs are rejected. Main requires the check with `strict: true`. |
+| Trusted check bound to the reviewed commit | `GitHub.approved` lists every `nomiarch-validate` check run for the exact PR head SHA (`filter=all`, all pages; an incomplete listing fails closed), keeps only runs created by the GitHub Actions app, and decides on the **newest by check-run id** (GitHub assigns ids in creation order; reruns get new ids). That run must be `completed` with `success`; a newer queued, in-progress, failed, cancelled or otherwise unsuccessful run is never bypassed by an older success. Main requires the check with `strict: true`. |
 | A fake check cannot substitute | Only check runs from the GitHub Actions app count (app id 15368 on github.com; app slug on Enterprise Server). The merged tree is independently compared with the admitted recipe, so a PR that edits the workflow or validator fails the controller comparison. |
 | Independent reviewer | A designated human, not the proposer, must approve the final commit; bot, stale and dismissed reviews do not count. |
 | Policy weakening | Edited `policies/*` fail the validator and the controller's recipe comparison; weakened branch protection fails `assert_protection` before planning and before applying. |
 | Plan safeguards | HMAC seal, digest, one-hour expiry, single use, exact configuration/snapshot/input binding, no re-planning during apply, provider `prepare()` is read-only (Azure saves a plan; the adopted host is probed over SSH; nothing is created). |
-| Duplicate resources | Planning is refused while a retained run exists for the same foundation; reopening setup shows that run instead. |
+| Duplicate resources | Planning holds a per-foundation lock and is refused while a retained run exists; two setup windows cannot both create an executable plan. Reopening setup shows that run instead. |
+| Saved and expired plans | Reopening a configuration offers **Review the saved plan** while it is valid (approval still needs the current repository check and is single use). An unused plan that expired or no longer matches the configuration can be **retired**: its plan and run records stay, `retired.json` and the foundation audit log record why, and it can never be executed. Retirement takes both the foundation and run locks, so it cannot race an apply, and it refuses any run that was approved, started, provisioned or has an inventory. A replacement plan needs fresh validation, the repository check and explicit approval. |
 | Failure recovery | Failed runs keep `run.json`, `plan.json`, `approval.json`, logs and any state; nothing is deleted automatically. |
 | Removal | Separate reviewed `destroy` request with its own PR and plan. Adopted on-premises hosts are never deleted. |
 | Future Nomi identities | Not created in this milestone. The bootstrap admin token is used once for repository creation/protection and should be removed afterwards; executor material stays in the controller's private directory. |
@@ -110,13 +111,31 @@ progress log, failures with retained-state instructions, inventory and verificat
 ## Verification
 
 Provisioning verifies, over the administration channel: Ubuntu 24.04, CPU architecture,
-CPU count, memory and root storage against the declared capacity, administrative access,
-and the network boundary. Local VMs get the persistent egress boundary installed and
+CPU count, memory, storage, administrative access and the network boundary. Storage is
+measured per destination and the result says what was measured:
+
+- **Local VM and adopted host:** the root filesystem against the declared storage.
+- **Azure:** the root filesystem of the fixed 32 GiB OS disk, plus the declared **data disk**:
+  the recorded `/dev/disk/azure/scsi1/lun0` device must resolve to a whole disk attached at
+  LUN 0 whose size meets the approved `disk_gib`, and the Azure control plane must report the
+  recorded managed disk as attached to the approved VM with at least that size. A missing,
+  differently attached or undersized disk fails verification. The disk is read with `lsblk`
+  only; verification never formats, partitions or mounts it, and never installs an application. Local VMs get the persistent egress boundary installed and
 verified. Adopted hosts in fully disconnected mode must fail a direct IPv4/IPv6 internet
 probe from inside the host. These are **software observations**; a private IP, a firewall or
 a blocked probe does not prove a physical air gap. Site qualification is separate.
 
 **Manage → Verify** re-runs the checks read-only and records `verification.json`.
+
+## Packaged desktop resources
+
+The vendored validator (`nomiarch/foundation/customer_validator.py`) is loaded from the
+installed package (`importlib.resources`, falling back to the PyInstaller bundle directory),
+never from a source checkout or the network. The desktop build adds it explicitly as data.
+The packaged `--self-test` on Windows, macOS (Intel and Apple silicon) and Linux generates a
+Local, On-premises and Azure infrastructure scaffold plus a Core-recipe scaffold from the
+bundle, round-trips each through `load_supported`, and runs the packaged validator on them;
+desktop CI fails if that acceptance line is missing.
 
 ## Disconnected operation and the infrastructure kit
 
@@ -171,5 +190,7 @@ Test clean-host recovery as part of site qualification.
 | Plan tamper/expiry/replay, configuration/input changes, duplicate prevention, failure retention | Implemented; verified by tests |
 | Adopted-host adoption and never-delete rule | Implemented; simulated with fake providers |
 | Offline kit fail-closed behaviour | Implemented; verified by tests (no network call) |
-| Desktop screens | Implemented; flow logic verified headlessly with a tkinter stand-in; rendering is covered by the native package self-test, not by this repository's CI |
+| Desktop screens | Implemented; flow logic verified headlessly with a tkinter stand-in on all desktop CI platforms; the packaged self-test renders the screens and generates and validates scaffolds from the bundle on all four platforms |
+| Azure data-disk verification | Implemented; simulated with a fake VM disk layout and control-plane response; the probe script itself was executed on a real Linux host |
+| Saved-plan reopen and retirement | Implemented; verified by tests including concurrent planning/apply/retirement with threads |
 | Real Multipass VM creation, real adopted host, real Azure provisioning, real GitHub/GHES check and review flow, disconnected-site qualification, clean-host recovery | **Outstanding acceptance**; not demonstrated by this implementation |

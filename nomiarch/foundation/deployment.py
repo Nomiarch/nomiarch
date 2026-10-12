@@ -2,10 +2,12 @@
 import copy
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import secrets
 import shutil
+import socket
 import time
 
 from nomiarch.bootstrap import bundle, controller
@@ -84,8 +86,34 @@ def admit_private_file(source, destination, mode=0o600):
     return str(destination.resolve())
 
 
+def foundation_lock(state_dir, foundation_id):
+    """One planning/retirement operation per foundation at a time, across controller processes."""
+    require(isinstance(foundation_id, str) and len(foundation_id) == 32 and all(c in '0123456789abcdef' for c in foundation_id), 'Invalid foundation identity')
+    return file_lock(Path(state_dir) / 'foundations' / (foundation_id + '.lock'), blocking=False)
+
+
+def audit(state_dir, foundation_id, event):
+    """Append-only, per-foundation controller audit log (private controller state, not Git)."""
+    path = Path(state_dir) / 'foundations' / (foundation_id + '.audit.jsonl')
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open('a', encoding='utf-8') as stream:
+        os.chmod(path, 0o600)
+        stream.write(json.dumps(dict(event, time=time.time()), sort_keys=True) + '\n')
+
+
 def prepare_infrastructure(project_dir, state_dir, source, paths, value, snapshot, *, factory=get_provider):
-    """Plan infrastructure only. No Core bundle, model or inference artifact is read or required."""
+    """Plan infrastructure only. No Core bundle, model or inference artifact is read or required.
+
+    The foundation lock makes the duplicate check and run creation atomic: two setup
+    windows cannot both create an executable plan for the same foundation.
+    """
+    with foundation_lock(state_dir, value['id']):
+        result = _prepare_infrastructure(project_dir, state_dir, source, paths, value, snapshot, factory=factory)
+        audit(state_dir, value['id'], {'event': 'plan-prepared', 'run_id': result['plan']['run_id'], 'digest': result['plan']['digest']})
+        return result
+
+
+def _prepare_infrastructure(project_dir, state_dir, source, paths, value, snapshot, *, factory=get_provider):
     config = copy.deepcopy(value['configuration'])
     paths = dict(paths or {})
     for forbidden in ('bundle', 'key'):
@@ -93,7 +121,8 @@ def prepare_infrastructure(project_dir, state_dir, source, paths, value, snapsho
     duplicates = infrastructure.existing_runs(state_dir, value['id'])
     if duplicates:
         raise NomiarchError('This foundation already has a retained run (' + str(duplicates[0]['phase']) + ') at ' + duplicates[0]['run_directory']
-                            + '. Open Manage to inspect, recover or remove it before planning again; planning again would create duplicate resources.')
+                            + '. Reopen it to review and approve, retire it if it is unused and expired or invalid, or use Manage to inspect, recover or remove it. '
+                            'Planning again would create duplicate resources.')
     if config['target'] == 'local':
         require(paths.get('image'), 'Select the admitted Ubuntu 24.04 image before planning')
         require(config['local']['image_sha256'] == scaffold.PINS[config['architecture']]['image'][1], 'Use the matching desktop recipe for this Ubuntu image')
@@ -230,8 +259,10 @@ def validate_plan(directory, source):
     require(hmac.compare_digest(supplied, sign(directory.parent.parent, sealed)), 'Plan integrity check failed')
     unsigned = dict(sealed); supplied_digest = unsigned.pop('digest')
     require(fingerprint(unsigned) == supplied_digest, 'Plan digest mismatch')
+    require(not (directory / 'retired.json').exists(), 'This plan was retired and can never be executed. Prepare and review a new plan.')
     run = read_json(directory / 'run.json')
     require(run['id'] == directory.name == record['run_id'], 'Plan/run identity mismatch')
+    require(run['phase'] != 'retired', 'This plan was retired and can never be executed. Prepare and review a new plan.')
     require(run['prefix'] == 'nomiarch-' + run['id'][:16], 'VM ownership prefix changed after planning')
     require(run['phase'] == 'awaiting-approval' and not run['creation_started'], 'This plan was already used or cannot be applied')
     require(run['config'] == record['configuration'], 'Configuration changed after planning')
@@ -328,3 +359,68 @@ def verify_infrastructure(directory, source, *, factory=get_provider):
                   'run_directory': str(directory), 'time': time.time()}
         write_json(directory / 'verification.json', result)
         return result
+
+
+def unused(directory, run):
+    """True only for a plan that provably never started: no approval, no creation, no inventory."""
+    return (run.get('phase') == 'awaiting-approval' and run.get('creation_started') is False and not run.get('inventory')
+            and run.get('cleanup', {}).get('status') == 'not-requested' and not (Path(directory) / 'approval.json').exists()
+            and not (Path(directory) / 'started.json').exists() and not (Path(directory) / 'report.json').exists())
+
+
+def saved_plan(state_dir, foundation_id, source):
+    """Reopen the foundation's pending plan after setup was closed. Returns None if there is none.
+
+    The full apply-time checks decide validity; the caller shows the plan again and still
+    needs the human's explicit approval and the repository review check to apply it.
+    """
+    for entry in infrastructure.existing_runs(state_dir, foundation_id):
+        if entry['phase'] != 'awaiting-approval':
+            continue
+        directory = Path(entry['run_directory'])
+        run = read_json(directory / 'run.json')
+        record = read_json(directory / 'plan.json')
+        try:
+            validate_plan(directory, source)
+            status, reason = 'valid', None
+        except NomiarchError as error:
+            status, reason = ('expired' if time.time() >= record.get('expires', 0) else 'invalid'), str(error)
+        return {'run_directory': str(directory), 'plan': record, 'status': status, 'reason': reason, 'unused': unused(directory, run)}
+    return None
+
+
+def retire_plan(directory, source, reason):
+    """Permanently retire an unused plan that is expired or no longer valid.
+
+    The plan and run records are kept; a retirement record explains why. The run and
+    foundation locks prevent racing an apply or a concurrent replacement plan.
+    """
+    directory = Path(directory).resolve()
+    require(isinstance(reason, str) and 3 <= len(reason.strip()) <= 500, 'Record why this plan is being retired')
+    state_dir = directory.parent.parent
+    run = read_json(directory / 'run.json')
+    foundation = (run.get('foundation') or {}).get('id')
+    require(foundation and run.get('scope') == 'infrastructure', 'Only infrastructure-only plans use this retirement path')
+    with foundation_lock(state_dir, foundation), file_lock(directory / 'controller.lock', blocking=False):
+        run = read_json(directory / 'run.json')  # refresh under both locks
+        require(not (directory / 'retired.json').exists(), 'This plan is already retired')
+        require(unused(directory, run), 'Only an unused plan can be retired. Provisioned, partially provisioned or uncertain runs '
+                                        'are kept for recovery; use Manage to inspect them or prepare a reviewed removal.')
+        record = read_json(directory / 'plan.json')
+        try:
+            validate_plan(directory, source)
+            valid = True
+        except NomiarchError as error:
+            valid, invalid_reason = False, str(error)
+        require(not valid, 'This plan is still valid. Reopen it to review and approve it, or let it expire before replacing it.')
+        evidence = {'schema': 1, 'run_id': run['id'], 'foundation': foundation, 'plan_digest': record.get('digest'),
+                    'expired': time.time() >= record.get('expires', 0), 'invalid_because': invalid_reason,
+                    'reason': reason.strip(), 'time': time.time(), 'controller': socket.gethostname(),
+                    'effect': 'This plan can never be executed. Plan and run records are retained.'}
+        write_json(directory / 'retired.json', evidence)
+        run['phase'] = 'retired'
+        run['retired'] = {'time': evidence['time'], 'reason': evidence['reason']}
+        controller.save(directory, run)
+        audit(state_dir, foundation, {'event': 'plan-retired', 'run_id': run['id'], 'digest': record.get('digest'), 'reason': evidence['reason'],
+                                      'invalid_because': invalid_reason})
+        return evidence

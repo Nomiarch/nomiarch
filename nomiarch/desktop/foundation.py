@@ -225,7 +225,7 @@ class FoundationScreens:
             self.clear('Your configuration is ready', 'Review the folder before planning. Preparing a plan checks prerequisites and proposed resources; it does not create the VM.', '04  Review configuration')
         ttk.Label(self.content, text=str(self.project_path), wraplength=820).pack(anchor='w', pady=8)
         self.button('Open configuration folder', lambda: service.open_folder(self.project_path))
-        if infrastructure_only: self.infrastructure_status_block(runs)
+        if infrastructure_only: self.infrastructure_status_block(runs, value)
         mode = value['repository']['mode']
         if mode in scaffold.REVIEW_MODES:
             self.repository_token_entry(value['repository'])

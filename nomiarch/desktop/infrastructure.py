@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from nomiarch.common import NomiarchError
-from nomiarch.foundation import backup, infrastructure, scaffold
+from nomiarch.foundation import backup, deployment, infrastructure, scaffold
 from . import service, setup_flow
 from .catalog import infrastructure_inventory
 
@@ -222,14 +222,33 @@ class InfrastructureScreens:
     def infrastructure_runs(self, value):
         return infrastructure.existing_runs(self.state_dir, value['id'])
 
-    def infrastructure_status_block(self, runs):
+    def infrastructure_status_block(self, runs, value=None):
         for run in runs:
             ttk.Label(self.content, text=f"Existing run {Path(run['run_directory']).name[:8]} · phase: {run['phase']} · infrastructure: "
                       f"{(run.get('validation') or {}).get('status', 'pending')} · application: {(run.get('application') or {}).get('status', 'n/a')}",
                       wraplength=840, foreground='#a5edc7').pack(anchor='w', pady=4)
-        if runs:
+        pending = deployment.saved_plan(self.state_dir, value['id'], self.repo) if value is not None and runs else None
+        if pending and pending['status'] == 'valid':
+            ttk.Label(self.content, text='A saved plan is waiting for your approval. Reopen it to review exactly what will be created; approving it still requires the current repository review check.', wraplength=840).pack(anchor='w', pady=4)
+            self.button('Review the saved plan', lambda: self.show_foundation_plan(pending), True)
+        elif pending and pending['unused']:
+            ttk.Label(self.content, text=f"The saved plan is {pending['status']} and was never used: {pending['reason']} "
+                      'Retire it to keep its record and permanently prevent it from running, then prepare a replacement plan.', wraplength=840).pack(anchor='w', pady=4)
+            self.button('Retire this unused plan', lambda: self.retire_saved_plan(pending), True)
+        elif runs:
             ttk.Label(self.content, text='This configuration already has a retained run. Planning again is refused so no duplicate resources are created. Use Manage to inspect, verify, back up or prepare a reviewed removal.', wraplength=840).pack(anchor='w', pady=4)
             self.button('Open Manage', self.manage)
+
+    def retire_saved_plan(self, pending):
+        if not messagebox.askokcancel('Retire unused plan', 'Retire plan ' + pending['plan']['digest'][:16] + '? It will never run. Its records are kept, '
+                                      'and a replacement plan needs fresh validation, the current repository review and your explicit approval.'):
+            return
+        directory = pending['run_directory']
+        reason = 'Operator replaced an unused ' + pending['status'] + ' plan from setup'
+        def ready(evidence):
+            self.status.set('Plan retired and recorded. Prepare a fresh plan for review.')
+            self.scaffold_ready()
+        self.start(lambda: deployment.retire_plan(directory, self.repo, reason), ready)
 
     def infrastructure_ready(self, result):
         status = infrastructure.status(result['run_directory'])

@@ -32,8 +32,17 @@ FACTS = {'cpus': 4, 'memory_kib': 16 * 1024 * 1024, 'disk_bytes': 100 * 1024 ** 
 
 
 class FakeProvider:
+    """Stands in for Multipass, an adopted SSH host and Azure. Records every remote command."""
     calls, facts, probe = [], dict(FACTS), {'ipv4': 'blocked', 'ipv6': 'blocked', 'public_dns': 'unresolvable'}
     failure = None
+    commands = []
+    # Azure shape: 32 GiB OS disk (~30 GiB root filesystem), temp disk, data disk at LUN 0.
+    azure = {}
+
+    @classmethod
+    def reset_azure(cls, data_gib=40, resolved='/dev/sdc', hctl='1:0:0:0', managed_by=None, control_gib=None, disk_id=None):
+        cls.azure = {'data_gib': data_gib, 'resolved': resolved, 'hctl': hctl, 'managed_by': managed_by,
+                     'control_gib': data_gib if control_gib is None else control_gib, 'disk_id': disk_id}
 
     def __init__(self, config, run, directory, runner, source):
         self.config, self.run, self.directory = config, run, Path(directory)
@@ -42,21 +51,45 @@ class FakeProvider:
         FakeProvider.calls.append('prepare')
         if self.config['target'] == 'azure': (self.directory / 'apply.tfplan').write_bytes(b'saved plan')
 
+    def vm_id(self):
+        return '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/' + self.run['prefix'] + '-rg/providers/Microsoft.Compute/virtualMachines/' + self.run['prefix'] + '-vm'
+
     def provision(self):
         FakeProvider.calls.append('provision')
         if FakeProvider.failure: raise FakeProvider.failure
         if self.config['target'] == 'existing':
             return {'host': self.config['existing']['host'], 'created_by_nomiarch': False, 'deletable_by_nomiarch': False}
+        if self.config['target'] == 'azure':
+            group = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/' + self.run['prefix'] + '-rg'
+            return {'host': '10.20.30.4', 'vm_id': self.vm_id(), 'resource_group': self.run['prefix'] + '-rg',
+                    'data_disk_id': group + '/providers/Microsoft.Compute/disks/' + self.run['prefix'] + '-data',
+                    'data_device': '/dev/disk/azure/scsi1/lun0', 'mode': 'azure-restricted'}
         return {'host': self.run['prefix']}
 
     def verify(self): return {'management': 'ok'}
 
     def remote(self, args, **kwargs):
         FakeProvider.calls.append('remote')
-        source = str(args[-1])
-        if 'meminfo' in source: return json.dumps(FakeProvider.facts)
+        FakeProvider.commands.append([str(a) for a in args])
+        source = ' '.join(str(a) for a in args)
+        if 'meminfo' in source:
+            if self.config['target'] != 'azure': return json.dumps(FakeProvider.facts)
+            a = FakeProvider.azure
+            disks = [{'name': 'sda', 'kname': 'sda', 'size': 32 * 1024 ** 3, 'type': 'disk', 'hctl': '0:0:0:0', 'mountpoint': None},
+                     {'name': 'sdb', 'kname': 'sdb', 'size': 16 * 1024 ** 3, 'type': 'disk', 'hctl': '0:0:0:1', 'mountpoint': None}]
+            if a['resolved']:
+                disks.append({'name': 'sdc', 'kname': 'sdc', 'size': a['data_gib'] * 1024 ** 3, 'type': 'disk', 'hctl': a['hctl'], 'mountpoint': None})
+            facts = dict(FakeProvider.facts, root_bytes=int(29.4 * 1024 ** 3), disks=disks, expected_device=str(args[-1]), expected_device_resolved=a['resolved'])
+            facts.pop('disk_bytes', None)
+            return json.dumps(facts)
         if 'getaddrinfo' in source: return json.dumps(FakeProvider.probe)
         return ''
+
+    def az(self, args, timeout=600):
+        FakeProvider.calls.append('az:' + ' '.join(args[:2]))
+        assert args[:2] == ['disk', 'show'], args
+        a = FakeProvider.azure
+        return {'id': a['disk_id'] or args[-1], 'managedBy': a['managed_by'] or self.vm_id(), 'diskSizeGb': a['control_gib']}
 
     def command(self, args, **kwargs):
         if args[:2] == ['tofu', 'show']: return json.dumps({'resource_changes': [{'address': 'module.foundation.azurerm_linux_virtual_machine.core', 'change': {'actions': ['create'], 'after': {'custom_data': 'secret-cloud-init'}, 'after_sensitive': {'custom_data': True}}}]})
@@ -115,7 +148,7 @@ class ChoiceTests(unittest.TestCase):
 class RecipeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()  # canonical, like production paths
 
     def test_infrastructure_recipe_needs_no_core_model_or_runtime_pins(self):
         for config, repo, mode in ((foundation_tests.LOCAL, GITHUB, 'restricted-connected'), (EXISTING, INTERNAL, 'fully-disconnected'), (AZURE, GITHUB, 'restricted-connected')):
@@ -192,6 +225,23 @@ class RecipeTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=folder, capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 1); self.assertIn('not listed in the manifest', result.stdout)
 
+    def test_validator_resource_loads_from_the_package_not_the_source_checkout(self):
+        from nomiarch.desktop import selftest
+        text = scaffold.validator_source()
+        self.assertEqual(text, (ROOT / 'nomiarch/foundation/customer_validator.py').read_text())
+        # Rendering must not depend on the `source` checkout for the validator.
+        value = scaffold.infrastructure_project(foundation_tests.LOCAL, 'customer', 'site', 'organisation', 'restricted-connected', GITHUB)
+        with patch('nomiarch.foundation.scaffold.validator_source', return_value=text) as loader:
+            files = scaffold.render(value, self.root / 'not-a-checkout')
+        loader.assert_called_once(); self.assertEqual(files['validation/validate.py'], text)
+        # A damaged or missing resource fails closed instead of generating an empty check.
+        with patch('nomiarch.foundation.scaffold.Path.read_text', side_effect=OSError('gone')):
+            with self.assertRaises(NomiarchError): scaffold.validator_source()
+        # The packaged self-test generates and validates every destination from package resources.
+        results = selftest.scaffold_acceptance(ROOT, self.root / 'acceptance')
+        self.assertEqual({results[k]['validator'] for k in ('local', 'existing', 'azure')}, {'passed'})
+        self.assertEqual(results['core_recipe'], '0.3.0')
+
     def test_generated_files_never_contain_credentials_or_private_material(self):
         value = scaffold.infrastructure_project(EXISTING, 'customer', 'site', 'organisation', 'fully-disconnected', INTERNAL)
         files = scaffold.render(value, ROOT)
@@ -205,9 +255,10 @@ class RecipeTests(unittest.TestCase):
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.state = self.root / 'state'
-        FakeProvider.calls, FakeProvider.failure = [], None
+        self.root = Path(self.temp.name).resolve(); self.state = self.root / 'state'  # canonical, like production paths
+        FakeProvider.calls, FakeProvider.failure, FakeProvider.commands = [], None, []
         FakeProvider.facts, FakeProvider.probe = dict(FACTS), {'ipv4': 'blocked', 'ipv6': 'blocked', 'public_dns': 'unresolvable'}
+        FakeProvider.reset_azure()
         self.addCleanup(patch.stopall)
         self.install = patch('nomiarch.bootstrap.controller.install_remote', side_effect=AssertionError('application installation must not run')).start()
         patch('nomiarch.foundation.infrastructure.network.configure', return_value={'guest_egress': 'blocked', 'configured': True}).start()
@@ -268,6 +319,68 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaises(NomiarchError): deployment.apply(directory, ROOT, plan['digest'], factory=FakeProvider)
                 status = infrastructure.status(directory)
                 self.assertEqual(status['phase'], 'infrastructure-ready'); self.assertEqual(status['application']['status'], 'not-installed')
+
+    def azure_result(self, verify_again=False):
+        directory, plan = self.plan('azure')
+        result = deployment.apply(directory, ROOT, plan['digest'], factory=FakeProvider)
+        if verify_again and result['phase'] == 'infrastructure-ready':
+            return directory, deployment.verify_infrastructure(directory, ROOT, factory=FakeProvider)
+        return directory, result
+
+    def test_azure_os_disk_plus_attached_data_disk_passes_and_reports_what_was_measured(self):
+        for data_gib in (40, 64, 512):
+            with self.subTest(data_gib=data_gib):
+                FakeProvider.reset_azure(data_gib=data_gib)
+                FakeProvider.calls = []
+                _, result = self.azure_result()
+                self.assertEqual(result['phase'], 'infrastructure-ready', result['validation'].get('error'))
+                storage = result['validation']['checks']['storage']
+                self.assertLess(storage['os_root_filesystem_gib'], 40)  # the root is the 32 GiB OS disk, not the data disk
+                self.assertEqual(storage['data_disk']['attached_size_gib'], data_gib)
+                self.assertEqual(storage['data_disk']['lun'], '0')
+                self.assertEqual(storage['data_disk']['control_plane']['disk_size_gb'], data_gib)
+                self.assertIn('not formatted or mounted', storage['data_disk']['inspection'])
+                self.assertIn('az:disk show', FakeProvider.calls)
+
+    def test_azure_missing_wrong_or_undersized_data_disk_fails(self):
+        other_vm = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/other/providers/Microsoft.Compute/virtualMachines/x'
+        cases = {'missing': dict(resolved=None), 'wrong-lun': dict(hctl='1:0:0:3'), 'undersized-device': dict(data_gib=20),
+                 'undersized-control-plane': dict(control_gib=20), 'attached-elsewhere': dict(managed_by=other_vm),
+                 'different-managed-disk': dict(disk_id='/subscriptions/x/resourceGroups/y/providers/Microsoft.Compute/disks/other'),
+                 'not-a-whole-disk': dict(resolved='/dev/sdc1')}
+        messages = {}
+        for label, kwargs in cases.items():
+            with self.subTest(label=label):
+                FakeProvider.reset_azure(**kwargs)
+                directory, result = self.azure_result()
+                self.assertEqual(result['phase'], 'failed', label)
+                messages[label] = result['validation']['error']
+                self.assertEqual(read_json(directory / 'run.json')['application']['status'], 'not-installed')
+        self.assertIn('not attached', messages['missing'])
+        self.assertIn('LUN', messages['wrong-lun'])
+        self.assertIn('requires 40 GiB', messages['undersized-device'])
+        self.assertIn('not attached to the approved VM', messages['attached-elsewhere'])
+
+    def test_azure_root_filesystem_is_not_compared_with_the_data_disk_size(self):
+        # The reviewed bug: 32 GiB OS disk vs. a 40 GiB declared data disk must not fail.
+        FakeProvider.reset_azure(data_gib=40)
+        _, result = self.azure_result()
+        self.assertEqual(result['phase'], 'infrastructure-ready')
+        # Local and adopted hosts keep root-filesystem semantics.
+        FakeProvider.facts = dict(FACTS, disk_bytes=20 * 1024 ** 3)
+        directory, plan = self.plan('existing')
+        result = deployment.apply(directory, ROOT, plan['digest'], factory=FakeProvider)
+        self.assertEqual(result['phase'], 'failed'); self.assertIn('Root storage', result['validation']['error'])
+
+    def test_verification_performs_no_storage_mutation(self):
+        FakeProvider.reset_azure()
+        directory, result = self.azure_result(verify_again=True)
+        self.assertEqual(result['validation']['status'], 'passed')
+        joined = ' '.join(' '.join(c) for c in FakeProvider.commands)
+        for forbidden in ('mkfs', 'mount ', 'parted', 'fdisk', 'wipefs', 'sgdisk', 'dd ', 'tee ', 'installer.pyz'):
+            self.assertNotIn(forbidden, joined)
+        self.assertTrue(all(c[:2] == ['python3', '-c'] for c in FakeProvider.commands))
+        self.install.assert_not_called()
 
     def test_adopted_host_requires_capacity_and_disconnected_probe(self):
         FakeProvider.facts = dict(FACTS, cpus=2)
@@ -343,6 +456,113 @@ class ControllerTests(unittest.TestCase):
         self.assertIn('duplicate', str(caught.exception))
         self.assertEqual(len(infrastructure.existing_runs(self.state, self.value['id'])), 1)
         self.assertEqual(FakeProvider.calls.count('provision'), 1)
+
+    def test_reopened_valid_plan_is_approved_once(self):
+        directory, plan = self.plan('local')
+        pending = deployment.saved_plan(self.state, self.value['id'], ROOT)
+        self.assertEqual((pending['status'], pending['run_directory']), ('valid', str(directory)))
+        self.assertEqual(pending['plan']['digest'], plan['digest'])
+        with self.assertRaises(NomiarchError): deployment.retire_plan(directory, ROOT, 'replace a valid plan')
+        deployment.apply(directory, ROOT, pending['plan']['digest'], factory=FakeProvider)
+        with self.assertRaises(NomiarchError): deployment.apply(directory, ROOT, pending['plan']['digest'], factory=FakeProvider)
+        self.assertIsNone(deployment.saved_plan(self.state, self.value['id'], ROOT))
+        self.assertEqual(FakeProvider.calls.count('provision'), 1)
+
+    def test_expired_unused_plan_is_retired_with_audit_and_replaced(self):
+        old_dir, old = self.plan('local')
+        later = old['expires'] + 10
+        with patch('nomiarch.foundation.deployment.time.time', return_value=later):
+            pending = deployment.saved_plan(self.state, self.value['id'], ROOT)
+            self.assertEqual(pending['status'], 'expired'); self.assertTrue(pending['unused'])
+            with self.assertRaises(NomiarchError) as caught:
+                deployment.prepare(self.folder, self.state, ROOT, self.paths('local'), factory=FakeProvider)
+            self.assertIn('retire', str(caught.exception))
+            evidence = deployment.retire_plan(old_dir, ROOT, 'expired before approval')
+            self.assertTrue(evidence['expired']); self.assertIn('expired', evidence['invalid_because'])
+            fresh = deployment.prepare(self.folder, self.state, ROOT, self.paths('local'), factory=FakeProvider)
+            # The retired plan never becomes executable again, even with a matching digest.
+            with self.assertRaises(NomiarchError): deployment.apply(old_dir, ROOT, old['digest'], factory=FakeProvider)
+            with self.assertRaises(NomiarchError): deployment.retire_plan(old_dir, ROOT, 'again')
+            deployment.apply(fresh['run_directory'], ROOT, fresh['plan']['digest'], factory=FakeProvider)
+        self.assertEqual(FakeProvider.calls.count('provision'), 1)
+        self.assertTrue((old_dir / 'plan.json').exists() and (old_dir / 'retired.json').exists())
+        self.assertEqual(read_json(old_dir / 'run.json')['phase'], 'retired')
+        log = [json.loads(line) for line in (self.state / 'foundations' / (self.value['id'] + '.audit.jsonl')).read_text().splitlines()]
+        self.assertEqual([e['event'] for e in log], ['plan-prepared', 'plan-retired', 'plan-prepared'])
+        # Restoring an old run.json phase cannot resurrect a retired plan.
+        run = read_json(old_dir / 'run.json'); run['phase'] = 'awaiting-approval'; write_json(old_dir / 'run.json', run)
+        with self.assertRaises(NomiarchError): deployment.apply(old_dir, ROOT, old['digest'], factory=FakeProvider)
+
+    def test_configuration_change_invalidates_saved_plan_and_requires_a_new_one(self):
+        old_dir, old = self.plan('existing')
+        changed = copy.deepcopy(self.value); changed['configuration']['capacity']['cpus'] = 8
+        for name, content in scaffold.render(changed, ROOT).items(): (self.folder / name).write_text(content)
+        pending = deployment.saved_plan(self.state, self.value['id'], ROOT)
+        self.assertEqual(pending['status'], 'invalid'); self.assertIn('changed', pending['reason'])
+        with self.assertRaises(NomiarchError): deployment.apply(old_dir, ROOT, old['digest'], factory=FakeProvider)
+        deployment.retire_plan(old_dir, ROOT, 'configuration changed after review')
+        fresh = deployment.prepare(self.folder, self.state, ROOT, self.paths('existing'), factory=FakeProvider)
+        self.assertEqual(fresh['plan']['configuration']['capacity']['cpus'], 8)
+        self.assertNotEqual(fresh['plan']['digest'], old['digest'])
+
+    def test_provisioned_partial_or_uncertain_runs_cannot_be_retired(self):
+        directory, plan = self.plan('local')
+        FakeProvider.failure = NomiarchError('launch interrupted')
+        deployment.apply(directory, ROOT, plan['digest'], factory=FakeProvider)  # partial: creation started, failed
+        with patch('nomiarch.foundation.deployment.time.time', return_value=plan['expires'] + 10):
+            with self.assertRaises(NomiarchError) as caught: deployment.retire_plan(directory, ROOT, 'try to hide a partial run')
+        self.assertIn('Only an unused plan', str(caught.exception))
+        FakeProvider.failure = None
+        for mutate in (lambda d, r: (d / 'approval.json').write_text('{}'),  # approved but run record not yet updated
+                       lambda d, r: write_json(d / 'run.json', dict(r, creation_started=True)),
+                       lambda d, r: write_json(d / 'run.json', dict(r, inventory={'host': 'x'}))):
+            with self.subTest(mutate=mutate):
+                self.root.joinpath('again').mkdir(exist_ok=True)
+                other = scaffold.infrastructure_project(self.configuration('local'), 'customer', 'site')
+                folder = self.root / ('again/' + other['id']); scaffold.create(folder, other, ROOT)
+                result = deployment.prepare(folder, self.state, ROOT, self.paths('local'), factory=FakeProvider)
+                d = Path(result['run_directory']); mutate(d, read_json(d / 'run.json'))
+                with patch('nomiarch.foundation.deployment.time.time', return_value=result['plan']['expires'] + 10):
+                    with self.assertRaises(NomiarchError): deployment.retire_plan(d, ROOT, 'uncertain state')
+                self.assertFalse((d / 'retired.json').exists())
+        # Adopted hosts keep their own never-delete rule after any plan lifecycle.
+        directory, plan = self.plan('existing')
+        deployment.apply(directory, ROOT, plan['digest'], factory=FakeProvider)
+        with self.assertRaises(NomiarchError): deployment.retire_plan(directory, ROOT, 'retire adopted host')
+        with self.assertRaises(NomiarchError): maintenance.propose(directory, ROOT, 'destroy')
+
+    def test_concurrent_planning_and_retirement_cannot_create_two_executable_plans(self):
+        import threading
+        value = scaffold.infrastructure_project(self.configuration('local'), 'customer', 'race')
+        folder = self.root / 'race'; scaffold.create(folder, value, ROOT)
+        entered, release = threading.Event(), threading.Event()
+        class Slow(FakeProvider):
+            def prepare(self):
+                entered.set(); release.wait(5); super().prepare()
+        results, errors = [], []
+        def plan():
+            try: results.append(deployment.prepare(folder, self.state, ROOT, self.paths('local'), factory=Slow))
+            except NomiarchError as error: errors.append(str(error))
+        first = threading.Thread(target=plan); first.start(); entered.wait(5)
+        plan()  # second window while the first holds the foundation lock
+        release.set(); first.join(5)
+        self.assertEqual(len(results), 1); self.assertEqual(len(errors), 1)
+        self.assertIn('Another controller', errors[0])
+        directory = Path(results[0]['run_directory'])
+        # An apply in progress holds the run lock; retirement cannot race it.
+        provisioning, finish = threading.Event(), threading.Event()
+        class SlowApply(FakeProvider):
+            def provision(self):
+                provisioning.set(); finish.wait(5); return super().provision()
+        applied = threading.Thread(target=lambda: deployment.apply(directory, ROOT, results[0]['plan']['digest'], factory=SlowApply))
+        applied.start(); provisioning.wait(5)
+        with patch('nomiarch.foundation.deployment.time.time', return_value=results[0]['plan']['expires'] + 10):
+            with self.assertRaises(NomiarchError): deployment.retire_plan(directory, ROOT, 'race the apply')
+        with self.assertRaises(NomiarchError): deployment.prepare(folder, self.state, ROOT, self.paths('local'), factory=FakeProvider)
+        finish.set(); applied.join(5)
+        self.assertEqual(read_json(directory / 'run.json')['phase'], 'infrastructure-ready')
+        self.assertFalse((directory / 'retired.json').exists())
+        self.assertEqual(len([r for r in infrastructure.existing_runs(self.state, value['id'])]), 1)
 
     def test_reopening_a_planned_configuration_does_not_plan_twice(self):
         self.plan('local')
@@ -420,8 +640,60 @@ class RequiredCheckTests(foundation_tests.RepositoryReviewTests):
     def call(self, path, *args):
         if '/check-runs?' in path:
             self.assertIn('/commits/' + self.head + '/', path)
-            return {'total_count': len(self.check_runs), 'check_runs': self.check_runs}
+            self.assertIn('filter=all', path); self.assertIn('check_name=nomiarch-validate', path)
+            self.check_queries = getattr(self, 'check_queries', []) + [path]
+            page = int(path.rsplit('page=', 1)[1])
+            size = int(path.split('per_page=')[1].split('&')[0])
+            total = getattr(self, 'reported_total', None)
+            return {'total_count': len(self.check_runs) if total is None else total,
+                    'check_runs': self.check_runs[(page - 1) * size: page * size]}
         return super().call(path, *args)
+
+    def run_of(self, run_id, status='completed', conclusion='success', **extra):
+        return dict(self.check_runs_template, id=run_id, status=status, conclusion=conclusion,
+                    completed_at=None if status != 'completed' else '2026-10-12T1%d:00:00Z' % (run_id % 10), **extra)
+
+    def decide(self, runs):
+        self.check_runs = runs
+        try:
+            return self.client.approved(self.value, self.snapshot, 7)['validation']['check_run_id']
+        except NomiarchError:
+            return None
+
+    def test_newest_run_decides_and_older_success_is_never_reused(self):
+        self.check_runs_template = dict(self.check_runs[0])
+        old_success = self.run_of(10)
+        for label, newer in {'queued': self.run_of(11, 'queued', None), 'in-progress': self.run_of(11, 'in_progress', None),
+                             'waiting': self.run_of(11, 'waiting', None), 'failure': self.run_of(11, conclusion='failure'),
+                             'cancelled': self.run_of(11, conclusion='cancelled'), 'timed-out': self.run_of(11, conclusion='timed_out'),
+                             'action-required': self.run_of(11, conclusion='action_required'), 'neutral': self.run_of(11, conclusion='neutral'),
+                             'skipped': self.run_of(11, conclusion='skipped'), 'stale': self.run_of(11, conclusion='stale')}.items():
+            with self.subTest(label=label):
+                self.assertIsNone(self.decide([old_success, newer]))
+                self.assertIsNone(self.decide([newer, old_success]))  # API order does not matter
+        # Old failure, newer completed success: accepted, and the newer run is the evidence.
+        self.assertEqual(self.decide([self.run_of(10, conclusion='failure'), self.run_of(12)]), 12)
+        self.assertEqual(self.decide([self.run_of(12), self.run_of(10, conclusion='failure')]), 12)
+        # A newer completion time on an older run does not outrank a newer run.
+        older_finished_late = dict(self.run_of(10), completed_at='2026-10-13T00:00:00Z')
+        self.assertIsNone(self.decide([older_finished_late, self.run_of(11, 'in_progress', None)]))
+        # Untrusted or unrelated newer runs are ignored, not allowed to authorize or to block.
+        self.assertEqual(self.decide([self.run_of(10), self.run_of(20, app={'id': 99, 'slug': 'someones-app'})]), 10)
+        self.assertEqual(self.decide([self.run_of(10), self.run_of(20, head_sha='c' * 40)]), 10)
+        self.assertEqual(self.decide([self.run_of(10), self.run_of(20, name='nomiarch-validate-lookalike')]), 10)
+        self.assertIsNone(self.decide([self.run_of(20, app={'id': 99, 'slug': 'someones-app'})]))
+        # Malformed identities fail closed.
+        self.assertIsNone(self.decide([dict(self.run_of(10), id='10')]))
+
+    def test_all_pages_are_read_and_incomplete_listings_fail_closed(self):
+        self.check_runs_template = dict(self.check_runs[0])
+        runs = [self.run_of(i) for i in range(1, 151)] + [self.run_of(151, 'in_progress', None)]
+        self.check_queries = []
+        self.assertIsNone(self.decide(runs))  # the pending run is on page 2
+        self.assertEqual([q.rsplit('page=', 1)[1] for q in self.check_queries], ['1', '2'])
+        self.assertEqual(self.decide(runs[:-1]), 150)
+        self.reported_total = 400  # API claims more runs than it returns
+        self.assertIsNone(self.decide(runs[:-1]))
 
     def test_exact_review_matches_scaffold_and_separate_human(self):
         proof = self.client.approved(self.value, self.snapshot, 7)
@@ -496,6 +768,7 @@ class InternalRequiredCheckTests(RequiredCheckTests):
 class SetupFlowTests(unittest.TestCase):
     def test_build_assembles_each_destination_without_release_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder).resolve()  # setup_flow returns canonical paths
             key = Path(folder) / 'key'; key.write_bytes(b'k'); hosts = Path(folder) / 'kh'; hosts.write_text('h ssh-ed25519 A\n')
             existing = setup_flow.existing_host_settings('host.site.internal', 'nomiarch', str(key), str(hosts))
             repository = setup_flow.repository_settings('github-enterprise', 'customer', 'infra', '@reviewer, second', 'https://Git.Company.Internal/', None, 'organisation', 'disconnected')

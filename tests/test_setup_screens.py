@@ -39,7 +39,7 @@ class SetupScreenTests(unittest.TestCase):
         from nomiarch.desktop import app as desktop_app
         self.desktop_app = desktop_app
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()  # canonical, like production paths
         self.image = self.root / 'ubuntu.img'; self.image.write_bytes(b'admitted image')
         pins = copy.deepcopy(scaffold.PINS); pins['amd64']['image'] = ('ubuntu.img', digest(self.image))
         patch('nomiarch.foundation.scaffold.PINS', pins).start()
@@ -190,8 +190,40 @@ class SetupScreenTests(unittest.TestCase):
             app.resume_foundation()
             self.assertEqual(app.flow, 'infrastructure'); self.assertEqual(app.location.get(), 'local')
             app.kit.set(str(self.root)); app.mode.set('offline'); app.prepare()
-        self.assertIn('already has a retained run', ' '.join(self.labels()))
+        # The closed-and-reopened setup offers the saved plan, not a second plan.
+        self.assertIn('A saved plan is waiting for your approval', ' '.join(self.labels()))
         self.assertNotIn('Prepare deployment plan', self.buttons())
+        self.assertEqual(app.github_token.get(), '')  # reopening never carries a token over
+        app.github_token.set('memory-only-token'); app.pull_number.set('7')
+        self.buttons()['Review the saved plan'].invoke()
+        self.assertIn('Approve this plan and establish the infrastructure', self.buttons())
+        app.apply_foundation()
+        self.assertIn('Infrastructure ready', ' '.join(self.labels()))
+        self.assertEqual(infrastructure_tests.FakeProvider.calls.count('provision'), 1)
+        app.scaffold_ready()
+        self.assertNotIn('Review the saved plan', self.buttons()); self.assertNotIn('Prepare deployment plan', self.buttons())
+
+    def test_expired_unused_plan_is_retired_from_setup_and_replaced(self):
+        self.choose_destination('local', 'github', 'restricted-connected')
+        app = self.app
+        app.cpus.set('2'); app.memory.set('8'); app.disk.set('40'); app.infrastructure_settings_continue()
+        app.kit.set(str(self.root)); app.mode.set('offline')
+        with patch('nomiarch.desktop.service.platform.system', return_value='Linux'): app.prepare()
+        app.make_infrastructure_scaffold(); app.pull_number.set('7'); app.prepare_foundation()
+        old = dict(app.pending_foundation)
+        expires = old['plan']['expires']
+        with patch('nomiarch.foundation.deployment.time.time', return_value=expires + 5):
+            app.scaffold_ready()
+            self.assertIn('expired and was never used', ' '.join(self.labels()))
+            self.assertNotIn('Review the saved plan', self.buttons())
+            self.buttons()['Retire this unused plan'].invoke()
+            self.assertTrue((Path(old['run_directory']) / 'retired.json').exists())
+            self.assertIn('Prepare deployment plan', self.buttons())
+        app.prepare_foundation()
+        self.assertNotEqual(app.pending_foundation['run_directory'], old['run_directory'])
+        app.apply_foundation()
+        self.assertEqual(infrastructure_tests.FakeProvider.calls.count('provision'), 1)
+        self.assertEqual(read_json(Path(old['run_directory']) / 'run.json')['phase'], 'retired')
 
     def test_missing_offline_image_stops_the_local_flow_without_download(self):
         self.choose_destination('local', 'github-enterprise', 'fully-disconnected')

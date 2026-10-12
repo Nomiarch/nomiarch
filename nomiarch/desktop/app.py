@@ -430,7 +430,10 @@ def main():
                 for args in (['login','--help'],['account','--help'],['vm','image','list','--help'],['network','nsg','show','--help'],['group','delete','--help']):
                     helper_output(args)
             app.destroy()
-            output.write_text('Desktop screens passed')
+            # Packaged acceptance: the bundle must generate and validate real scaffolds on its own.
+            from .selftest import main as scaffold_acceptance
+            acceptance=scaffold_acceptance(app.repo)
+            output.write_text('Desktop screens passed\nPackaged scaffold acceptance: '+json.dumps(acceptance,sort_keys=True)+'\n')
         return
     App().mainloop()
 

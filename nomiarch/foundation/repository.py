@@ -205,16 +205,27 @@ class GitHub:
         return proof
 
     def validated(self, value, root, head):
-        """The trusted validation check must have completed successfully for the exact reviewed commit.
+        """The newest trusted validation run for the exact reviewed commit must have succeeded.
 
-        Only check runs created by the GitHub Actions app count; a status posted with a
-        user token, a run for another commit or an unfinished/failed run is rejected.
-        The merged tree is separately compared with the admitted recipe, so a workflow
-        edited inside the proposal cannot stand in for the recipe's validator.
+        Selection uses the check-run id, which GitHub assigns in creation order (a rerun
+        or re-trigger always gets a new, larger id), never completion time, so a newer
+        queued or in-progress run can't be hidden behind an older success. `filter=all`
+        disables GitHub's default "latest only" filtering and every page is read; an
+        incomplete listing fails closed. Only check runs created by the GitHub Actions
+        app for this head SHA count. The merged tree is separately compared with the
+        admitted recipe, so an edited workflow or validator can't stand in for it.
         """
-        result = self.call(root + '/commits/' + head + '/check-runs?check_name=' + scaffold.VALIDATION_CHECK + '&per_page=100')
-        runs = result.get('check_runs') if isinstance(result, dict) else None
-        require(isinstance(runs, list), 'Unexpected check-run response from the repository')
+        path = root + '/commits/' + head + '/check-runs?check_name=' + scaffold.VALIDATION_CHECK + '&filter=all&per_page=100'
+        runs, total = [], None
+        for page in range(1, 11):
+            result = self.call(path + f'&page={page}')
+            require(isinstance(result, dict) and isinstance(result.get('check_runs'), list) and type(result.get('total_count')) is int,
+                    'Unexpected check-run response from the repository')
+            total = result['total_count'] if total is None else total
+            runs.extend(result['check_runs'])
+            if len(result['check_runs']) < 100 or len(runs) >= total:
+                break
+        require(len(runs) >= total, 'The repository returned an incomplete check-run listing; refusing to trust a partial history')
         trusted = []
         for run in runs:
             app = run.get('app') or {}
@@ -222,11 +233,14 @@ class GitHub:
                 continue
             if value['repository']['mode'] == 'github' and app.get('id') != scaffold.GITHUB_ACTIONS_APP_ID:
                 continue
+            require(type(run.get('id')) is int and run['id'] > 0, 'A check run without a valid identity was returned')
             trusted.append(run)
         require(trusted, 'The trusted ' + scaffold.VALIDATION_CHECK + ' check has not run for the reviewed commit; a check for another commit or from another source is not accepted')
-        trusted.sort(key=lambda r: (r.get('completed_at') or '', r.get('id') or 0))
-        latest = trusted[-1]
-        require(latest.get('status') == 'completed', 'The trusted validation check has not completed for the reviewed commit')
-        require(latest.get('conclusion') == 'success', 'The trusted validation check did not succeed for the reviewed commit: ' + str(latest.get('conclusion')))
+        latest = max(trusted, key=lambda r: r['id'])
+        require(latest.get('status') == 'completed',
+                'The newest trusted validation run for the reviewed commit is ' + str(latest.get('status')) + '; wait for it to finish before planning or applying')
+        require(latest.get('conclusion') == 'success',
+                'The newest trusted validation run for the reviewed commit did not succeed: ' + str(latest.get('conclusion')))
         return {'check': scaffold.VALIDATION_CHECK, 'app': 'github-actions', 'app_id': (latest.get('app') or {}).get('id'),
-                'head_sha': head, 'completed_at': latest.get('completed_at'), 'check_run_id': latest.get('id'), 'url': latest.get('html_url')}
+                'head_sha': head, 'completed_at': latest.get('completed_at'), 'check_run_id': latest['id'], 'url': latest.get('html_url'),
+                'runs_considered': len(trusted)}
