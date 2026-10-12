@@ -1,5 +1,5 @@
-"""Reviewed download pins. Desktop 0.1.0.dev5 installs the tested Core dev3."""
-DESKTOP_VERSION = '0.1.0.dev5'
+"""Reviewed download pins. Desktop 0.1.0.dev6 adds infrastructure-only bootstrap."""
+DESKTOP_VERSION = '0.1.0.dev6'
 RELEASE_READY = True  # Published Core artifacts passed both architecture gates.
 CORE_VERSION = '0.1.0.dev3'
 BASE = 'https://github.com/Nomiarch/nomiarch/releases/download/v0.1.0.dev3/'
@@ -18,3 +18,27 @@ PREREQUISITES = {
  'Windows': ('https://github.com/canonical/multipass/releases/download/v1.16.4/multipass-1.16.4%2Bwin-win64.msi', 'b0c417fb8254fa61e4aa63895f59354bb3717c58100816651a9300dd98124aea', 'Multipass.msi'),
  'Darwin': ('https://github.com/canonical/multipass/releases/download/v1.16.4/multipass-1.16.4%2Bmac-Darwin.pkg', 'e481704f65bc1650ae8aa5c873eb9137e8b9b403eac60aa603b68d8b4d2c281c', 'Multipass.pkg'),
 }
+
+
+def infrastructure_inventory(architecture):
+    """Pinned infrastructure-kit contents for the bootstrap milestone. No model or Core artifact.
+
+    The connected staging computer collects these, records hashes, and the signed
+    inventory travels through the site's controlled transfer. Inside a fully
+    disconnected boundary nothing here is downloaded; a missing file fails closed.
+    """
+    image_name, image_sha = PINS[architecture]['image']
+    return {
+        'schema': 1, 'scope': 'infrastructure', 'architecture': architecture,
+        'os_image': {'file': image_name, 'sha256': image_sha, 'source': IMAGE_BASE, 'use': 'local VM creation'},
+        'vm_support': {system: {'file': name, 'sha256': sha, 'source': url, 'use': 'Multipass installer for local VMs'}
+                       for system, (url, sha, name) in PREREQUISITES.items()},
+        'tools': {'opentofu': {'version': '1.12.6', 'use': 'Azure plan/apply on the controller; restricted connected only'},
+                  'azure_cli': {'version': '2.90.0', 'use': 'Azure sign-in and image discovery; restricted connected only'},
+                  'openssh': {'use': 'trusted administration of adopted and created hosts'}},
+        'providers': {'azurerm': {'version': '4.49.0', 'lock': 'infra/azure/.terraform.lock.hcl', 'use': 'vendored into the customer repository'}},
+        'workflow_dependencies': {'actions/checkout': {'pinned': 'fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+                                                       'use': 'customer validation workflow; admit into GitHub Enterprise Server for disconnected sites'},
+                                  'python': {'minimum': '3.11', 'use': 'runs validation/validate.py on the validation runner'}},
+        'models_and_core': 'not required in this milestone; later admission follows the same transfer process',
+    }

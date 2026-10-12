@@ -10,7 +10,12 @@ Use Python 3.11+ on macOS/Linux, or WSL2 on Windows. Run from the repository roo
 ```bash
 python3 -m nomiarch dev demo
 python3 -m unittest discover -s tests -v
+python3 scripts/check_scaffold.py   # needs OpenTofu; validates both generated customer roots
 ```
+
+`tests/test_infrastructure.py` and `tests/test_setup_screens.py` cover the infrastructure-only
+bootstrap with fake providers and a headless tkinter stand-in; they create no VM, host or
+cloud resource and read no Core release. The screen tests do not render widgets.
 
 Expected demo result: task `completed`, two failing sample controls, one passing control,
 an evidence checkpoint, unauthenticated access `denied`, and forbidden tool `denied`.

@@ -84,8 +84,19 @@ class SSH(Provider):
 
 
 class Existing(SSH):
+    def endpoint(self):
+        # The adopted host is known before provisioning; nothing is created.
+        return self.config["existing"]["ssh_user"] + "@" + self.config["existing"]["host"]
+
+    def prepare(self):
+        # Read-only preflight: trusted SSH with the enrolled host key and non-interactive sudo.
+        # A failure here explains the missing prerequisite before any record of adoption.
+        self.remote(["sudo", "-n", "true"], timeout=60)
+        self.run["preflight"] = {"ssh": "authenticated with enrolled host key", "sudo": "non-interactive sudo available"}
+
     def provision(self):
-        return {"host": self.config["existing"]["host"], "mode": "existing-site-boundary", "data_device": None}
+        return {"host": self.config["existing"]["host"], "mode": "existing-site-boundary", "data_device": None,
+                "created_by_nomiarch": False, "deletable_by_nomiarch": False}
 
     def verify(self):
         self.remote(["sudo", "-n", "true"])

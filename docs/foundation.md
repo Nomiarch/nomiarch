@@ -1,5 +1,10 @@
 # Customer-owned setup and human approval
 
+For the infrastructure-only bootstrap (Local / On-premises / Cloud→Azure, GitHub SaaS or
+Enterprise Server, restricted connected or fully disconnected, recipe 0.4.0) see
+[infrastructure-bootstrap.md](infrastructure-bootstrap.md). This page describes the
+Core installation preview paths, which remain available unchanged for recipes 0.2.0/0.3.0.
+
 Desktop 0.1.0.dev5 adds internal GitHub Enterprise Server approval support and uses
 the admitted Core 0.1.0.dev3 artifacts. Use the downloads linked from the
 [customer guide](https://nomiarch.com/docs/running/).

@@ -17,6 +17,7 @@ from nomiarch.bootstrap.config import validate
 from nomiarch.common import NomiarchError, read_json, write_json
 from . import service
 from .foundation import FoundationScreens
+from .infrastructure import InfrastructureScreens
 from .catalog import CORE_VERSION, DESKTOP_VERSION, PINS
 
 BG, PANEL, TEXT, MUTED, ACCENT = '#101a19', '#1a2825', '#eff8f3', '#a6beb4', '#a5edc7'
@@ -31,7 +32,7 @@ class LogSink(io.TextIOBase):
     def flush(self): pass
 
 
-class App(FoundationScreens, tk.Tk):
+class App(InfrastructureScreens, FoundationScreens, tk.Tk):
     def __init__(self, root_dir=None):
         super().__init__()
         self.title('Nomiarch Setup')
@@ -52,6 +53,7 @@ class App(FoundationScreens, tk.Tk):
         self.disk = tk.StringVar(value='40')
         self.recipient = tk.StringVar()
         self.foundation_variables()
+        self.infrastructure_variables()
         self.status = tk.StringVar(value='Welcome. Let’s create your first Nomiarch system.')
         style = ttk.Style(self)
         style.theme_use('clam')
@@ -112,8 +114,9 @@ class App(FoundationScreens, tk.Tk):
     def home(self):
         self.clear('Your AI. Your environment.',
                    'Choose where your system runs. The wizard creates your configuration, shows the plan and asks for your approval before installation.')
-        self.button('Set up this computer', lambda: self.customer('local'), True)
-        self.button('Set up in the cloud — Azure', lambda: self.customer('azure'))
+        self.button('Set up infrastructure — Local, On-premises or Cloud (no AI yet)', self.infrastructure_home, True)
+        self.button('Set up this computer with Core (preview)', lambda: self.customer('local'))
+        self.button('Set up in the cloud with Core — Azure (preview)', lambda: self.customer('azure'))
         self.button('Download an offline kit', lambda: self.download_screen(True))
         self.button('Open a customer configuration', self.resume_foundation)
         self.button('Manage an installation', self.manage)
@@ -179,16 +182,26 @@ class App(FoundationScreens, tk.Tk):
 
     def prepare(self):
         folder, online = self.kit.get(), self.mode.get()=='online'
+        infrastructure_only = getattr(self,'flow','core')=='infrastructure' and not self.kit_only
         try: arch='amd64' if self.target=='azure' and not self.kit_only else service.architecture()
         except Exception as e: messagebox.showerror('This computer',str(e));return
         def task():
+            if infrastructure_only:
+                # Image and VM support only: no Core bundle, release key or model is read.
+                return service.prepare_infrastructure_kit(folder,arch,online,self.download_progress,self.cancel)
             paths=service.prepare_kit(folder,arch,online,self.download_progress,self.cancel)
             manifest=bundle.inspect(paths['bundle'],paths['key'])
             if manifest['architecture']!=arch:raise NomiarchError('Bundle architecture mismatch')
             return paths
         def ready(paths):
             self.paths=paths
-            if self.kit_only:
+            if infrastructure_only:
+                if getattr(self,'resume_after_files',False):
+                    self.resume_after_files=False
+                    self.infrastructure_paths={'image':paths['image']}
+                    self.scaffold_ready()
+                else:self.infrastructure_review()
+            elif self.kit_only:
                 self.status.set('Offline kit verified. Copy this folder and the desktop app through your approved transfer process.')
                 messagebox.showinfo('Kit ready','Your offline kit is ready. The isolated computer also needs VM support installed.')
             elif getattr(self,'resume_after_files',False):
@@ -205,6 +218,8 @@ class App(FoundationScreens, tk.Tk):
         self.button('Back',lambda:self.download_screen(False))
 
     def installed(self,result):
+        if result.get('validation',{}).get('scope')=='infrastructure':
+            self.infrastructure_ready(result);return
         if result['validation']['status']!='passed':
             raise NomiarchError('Installation did not complete. Keep the run record and use Manage → Repair or Remove. '+result['validation'].get('error',''))
         self.clear('Your system is ready', 'Core and the local model passed their first task. Choose Verify to run it again, or manage the installation from this app.', '04  Installation verified')
@@ -231,6 +246,7 @@ class App(FoundationScreens, tk.Tk):
             ttk.Button(row,text=label,command=lambda a=action:self.maintenance(a)).pack(side='left',padx=(0,6))
         self.button('Remove selected VM…',lambda:self.maintenance('destroy'))
         self.button('Observe and review foundation changes',self.foundation_management)
+        self.button('Infrastructure status and backup',self.infrastructure_selected)
         self.button('Home',self.home)
 
     def import_run(self):
@@ -243,10 +259,32 @@ class App(FoundationScreens, tk.Tk):
                 self.listbox['values']=values;self.listbox.current(len(values)-1)
             except Exception as e:messagebox.showerror('Import failed',str(e))
 
+    def infrastructure_selected(self):
+        i=self.listbox.current()
+        if i<0:messagebox.showinfo('Select an installation','Select or import an installation first.');return
+        directory,record=self.records[i]
+        if (record.get('foundation') or {}).get('scope')!='infrastructure':
+            messagebox.showinfo('Not an infrastructure-only foundation','This record was created by the Core installation flow. Use Saved status for it.');return
+        self.infrastructure_status_screen(directory)
+
     def maintenance(self,action):
         i=self.listbox.current()
         if i<0:messagebox.showinfo('Select an installation','Select or import an installation first.');return
         directory,record=self.records[i]
+        if (record.get('foundation') or {}).get('scope')=='infrastructure':
+            if action in ('repair','upgrade'):
+                messagebox.showinfo('Infrastructure only','No application is installed on this foundation. Application installation, upgrade and repair are later reviewed operations.');return
+            if action=='backup':self.backup_foundation(directory);return
+            if action=='status':self.infrastructure_status_screen(directory);return
+            if action=='verify':
+                from nomiarch.foundation import deployment as foundation_deployment
+                def verify_task():
+                    service.locate_multipass() if record['config']['target']=='local' else None
+                    return foundation_deployment.verify_infrastructure(directory,self.repo)
+                def verified(result):
+                    self.status.set('Infrastructure verification '+result['validation']['status']+'. Recorded in the run folder.')
+                    self.events.put(('log',json.dumps(result,indent=2)))
+                self.start(verify_task,verified);return
         if record.get('foundation') and action in ('repair','upgrade','destroy'):
             self.foundation_operation(directory,record,action)
             return
@@ -364,7 +402,11 @@ def main():
                 app.repository_token_entry(dict(settings, name='another-project'))
                 assert app.github_token.get() == ''
                 app.github_screen()
-            screens=[('home',app.home),('customer',lambda:app.customer('local')),('repository',app.repository_screen),
+            def infrastructure_settings():
+                app.target='existing'; app.location.set('on-premises'); app.provider.set('existing-host'); app.infrastructure_settings_screen()
+            screens=[('home',app.home),('infrastructure',app.infrastructure_home),('git-service',app.git_service_screen),
+                     ('network-mode',app.network_mode_screen),('infrastructure-settings',infrastructure_settings),
+                     ('customer',lambda:app.customer('local')),('repository',app.repository_screen),
                      ('github',app.github_screen),('internal-repository',internal_repository),('azure',app.cloud_screen),('files',app.download_screen),('capacity',app.review),('manage',app.manage)]
             for name,screen in screens:
                 screen();app.update()
@@ -388,7 +430,10 @@ def main():
                 for args in (['login','--help'],['account','--help'],['vm','image','list','--help'],['network','nsg','show','--help'],['group','delete','--help']):
                     helper_output(args)
             app.destroy()
-            output.write_text('Desktop screens passed')
+            # Packaged acceptance: the bundle must generate and validate real scaffolds on its own.
+            from .selftest import main as scaffold_acceptance
+            acceptance=scaffold_acceptance(app.repo)
+            output.write_text('Desktop screens passed\nPackaged scaffold acceptance: '+json.dumps(acceptance,sort_keys=True)+'\n')
         return
     App().mainloop()
 

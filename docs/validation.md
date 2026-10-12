@@ -49,6 +49,18 @@ OPA `v1.20.2`, age `v1.3.2`, and the checksum-pinned Qwen2.5 0.5B Q4_K_M model i
 The separate development-workspace model run used llama.cpp `v0.4.1`; it does not
 establish the version of every subsequent container build from a moving upstream tag.
 
+## Infrastructure bootstrap milestone (recipe 0.4.0)
+
+Automated tests cover destination/Git/network combinations, the infrastructure-only
+recipe and its vendored validator, required trusted checks bound to the reviewed commit,
+plan tamper/expiry/replay and input-change rejection, no provisioning during planning,
+no application installation, failure retention and duplicate prevention, adopted-host
+deletion denial, secret redaction, offline fail-closed kit admission, backup export and
+the desktop flow logic with a headless tkinter stand-in. Fake providers simulate Multipass,
+SSH hosts and Azure; a real deployment of each destination/Git combination, a deployed
+GitHub Enterprise Server and a physically disconnected site remain acceptance gates. See
+[infrastructure-bootstrap.md](infrastructure-bootstrap.md).
+
 ## v0.1.0 qualification matrix
 
 Desktop dev5 adds tests for internal GitHub Enterprise Server transport and review.

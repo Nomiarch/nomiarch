@@ -8,6 +8,12 @@ repair, upgrade, and encrypted recovery of application state have passed integra
 Actual Azure provisioning, local hypervisor combinations, and disconnected clean-host restore
 remain release gates. See [validation status](docs/validation.md).
 
+The [infrastructure bootstrap milestone](docs/bootstrap-milestone.md) is implemented as
+recipe 0.4.0: user-selected Local, On-premises or Cloud (Azure), GitHub SaaS or Enterprise
+Server, restricted connected or fully disconnected. It establishes infrastructure first and
+installs no model, Core or agent; see [the infrastructure bootstrap guide](docs/infrastructure-bootstrap.md)
+for the flow, enforced boundaries and the acceptance checks that still need real targets.
+
 ## Customer VM installation
 
 Follow [the customer guide](docs/customer-guide.md) for downloads, offline installation,
@@ -49,6 +55,7 @@ bundle preparation and air-gap prerequisites; the wizard does not create physica
 
 | Component | Behavior |
 | --- | --- |
+| Infrastructure bootstrap (desktop) | Local VM / adopted on-premises host / Azure, GitHub SaaS or Enterprise Server, network-mode compatibility checks, protected repository with a required trusted check, one-use approved plans, infrastructure-ready verification and backup — no application installed |
 | Bootstrap CLI | Interactive configuration, planning, provisioning, installation, repair, core upgrades, backup, status, and scoped destruction |
 | Local provider | Creates a uniquely named Multipass VM from an admitted Ubuntu 24.04 image |
 | Existing host provider | Installs on a dedicated Ubuntu 24.04 host through trusted SSH; cannot destroy the host |
