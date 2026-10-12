@@ -171,6 +171,27 @@ class RecipeTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=folder, capture_output=True, text=True, env=env)
                 self.assertEqual(result.returncode, 1); self.assertIn('approval policy', result.stdout)
 
+    def test_validator_keeps_tofu_data_outside_the_repository_and_rejects_stray_files(self):
+        value = scaffold.infrastructure_project(AZURE, 'customer', 'site', 'organisation', 'restricted-connected', GITHUB)
+        folder = self.root / 'tofu'; scaffold.create(folder, value, ROOT)
+        bin_dir = self.root / 'bin'; bin_dir.mkdir()
+        tofu = bin_dir / 'tofu'
+        # Stand-in tofu: records TF_DATA_DIR and would pollute the cwd if the variable were missing.
+        tofu.write_text('#!/bin/sh\nmkdir -p "${TF_DATA_DIR:-.terraform}/providers"\necho "$TF_DATA_DIR" >> "' + str(self.root / 'data-dirs') + '"\n')
+        tofu.chmod(0o755)
+        env = {'PATH': str(bin_dir) + ':/usr/bin:/bin'}
+        before = scaffold.snapshot(folder)
+        for _ in range(2):
+            result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=folder, capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)['terraform'], 'passed')
+        self.assertEqual(scaffold.snapshot(folder), before)
+        data_dirs = (self.root / 'data-dirs').read_text().split()
+        self.assertTrue(data_dirs and all(not d.startswith(str(folder)) for d in data_dirs))
+        stray = folder / 'environments/site/.terraform/providers'; stray.mkdir(parents=True); (stray / 'x').write_text('cache')
+        result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=folder, capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 1); self.assertIn('not listed in the manifest', result.stdout)
+
     def test_generated_files_never_contain_credentials_or_private_material(self):
         value = scaffold.infrastructure_project(EXISTING, 'customer', 'site', 'organisation', 'fully-disconnected', INTERNAL)
         files = scaffold.render(value, ROOT)

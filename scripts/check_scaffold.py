@@ -26,13 +26,18 @@ with tempfile.TemporaryDirectory() as folder:
     for name, value in recipes:
         destination = Path(folder) / name
         create(destination, value, ROOT)
+        if name == 'infrastructure':
+            # Run the vendored validator first, exactly as on a fresh customer checkout.
+            result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=destination, capture_output=True, text=True)
+            print(result.stdout)
+            if result.returncode or json.loads(result.stdout).get('terraform') != 'passed':
+                raise SystemExit('Vendored customer validator did not pass with OpenTofu available: ' + result.stdout + result.stderr)
+            # It must also be repeatable and leave the checked tree unchanged.
+            again = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=destination, capture_output=True, text=True)
+            if again.returncode:
+                raise SystemExit('Vendored customer validator is not repeatable: ' + again.stdout)
         runner = Runner()
         runner.run(['tofu', 'fmt', '-check', '-recursive'], cwd=destination)
         environment = destination / 'environments/evaluation'
         runner.run(['tofu', 'init', '-backend=false', '-input=false', '-lockfile=readonly'], cwd=environment)
         print(name + ':', runner.run(['tofu', 'validate', '-no-color'], cwd=environment))
-        if name == 'infrastructure':
-            result = subprocess.run([sys.executable, '-I', 'validation/validate.py'], cwd=destination, capture_output=True, text=True)
-            print(result.stdout)
-            if result.returncode or json.loads(result.stdout).get('terraform') != 'passed':
-                raise SystemExit('Vendored customer validator did not pass with OpenTofu available: ' + result.stderr)

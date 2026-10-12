@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RECIPE_VERSION = '0.4.0'
@@ -156,9 +157,13 @@ def check_terraform(value):
     if not tofu:
         return 'skipped: tofu is not admitted on this runner; the controller validates the plan before approval'
     environment = os.path.join(ROOT, 'environments', value['environment'])
-    for args in (['fmt', '-check', '-recursive'], ['init', '-backend=false', '-input=false', '-lockfile=readonly'], ['validate', '-no-color']):
-        result = subprocess.run([tofu, *args], cwd=environment, capture_output=True, text=True, timeout=600)
-        require(result.returncode == 0, 'tofu ' + args[0] + ' failed: ' + result.stdout[-800:] + result.stderr[-800:])
+    # Keep OpenTofu's provider cache outside the repository so validation never
+    # changes the tree it checks and can be repeated on the same checkout.
+    with tempfile.TemporaryDirectory(prefix='nomiarch-validate-') as data:
+        env = dict(os.environ, TF_DATA_DIR=data, TF_IN_AUTOMATION='1')
+        for args in (['fmt', '-check', '-recursive'], ['init', '-backend=false', '-input=false', '-lockfile=readonly'], ['validate', '-no-color']):
+            result = subprocess.run([tofu, *args], cwd=environment, capture_output=True, text=True, timeout=600, env=env)
+            require(result.returncode == 0, 'tofu ' + args[0] + ' failed: ' + result.stdout[-800:] + result.stderr[-800:])
     return 'passed'
 
 
