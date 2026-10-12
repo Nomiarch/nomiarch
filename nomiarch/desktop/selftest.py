@@ -64,7 +64,7 @@ def run_validator(folder):
 
 
 def scaffold_acceptance(source, folder):
-    """Generate and validate one scaffold per destination from the packaged resources."""
+    """Generate and validate every supported infrastructure combination from packaged resources."""
     results = {'validator_source_bytes': len(scaffold.validator_source())}
     for label, config, repository, mode in cases():
         value = scaffold.infrastructure_project(config, 'selftest', 'acceptance', 'organisation', mode, repository)
