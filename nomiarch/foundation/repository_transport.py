@@ -9,6 +9,7 @@ import urllib.request
 
 from nomiarch.bootstrap.config import require
 from nomiarch.common import NomiarchError
+from nomiarch.tls import default_context
 
 
 REVIEW_MODES = frozenset({'github', 'github-enterprise'})
@@ -58,7 +59,7 @@ def server_origin(value):
 
 def certificate_context(certificate=None):
     if certificate is None:
-        context = ssl.create_default_context()
+        context = default_context()
     else:
         require(isinstance(certificate, str) and 1 <= len(certificate) <= 65536,
                 'The public CA certificate file must be at most 64 KiB')

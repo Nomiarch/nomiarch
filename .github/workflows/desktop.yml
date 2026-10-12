@@ -4,7 +4,7 @@ on:
     paths: ['nomiarch/**', 'desktop/**', 'tests/**', '.github/workflows/desktop.yml']
   push:
     branches: [main]
-    paths: ['nomiarch/desktop/**', 'nomiarch/foundation/**', 'desktop/**', '.github/workflows/desktop.yml']
+    paths: ['nomiarch/**', 'desktop/**', '.github/workflows/desktop.yml']
 permissions:
   contents: read
 jobs:
@@ -40,6 +40,7 @@ jobs:
         run: python -m pip install -r desktop/requirements.txt -r desktop/cloud-requirements.txt
       - name: Native controller tests
         run: |
+          python -m unittest discover -s tests -p test_tls.py -v
           python -m unittest discover -s tests -p test_desktop.py -v
           python -m unittest discover -s tests -p test_foundation.py -v
           python -m unittest discover -s tests -p test_internal_repository.py -v
@@ -65,6 +66,17 @@ jobs:
           PY
       - name: Package native desktop app
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NomiarchSetup --paths . --add-data packages:packages --add-data infra:infra --add-data cloud-tools:cloud-tools --add-data nomiarch/foundation/customer_validator.py:nomiarch/foundation desktop/launcher.py
+      - name: Test packaged HTTPS downloads
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = 'Windows' ]; then
+            dist/NomiarchSetup.exe --network-self-test network-test.json
+          elif [ "$RUNNER_OS" = 'macOS' ]; then
+            dist/NomiarchSetup.app/Contents/MacOS/NomiarchSetup --network-self-test network-test.json
+          else
+            dist/NomiarchSetup --network-self-test network-test.json
+          fi
+          cat network-test.json
       - name: Test packaged Windows screens
         if: runner.os == 'Windows'
         shell: pwsh
@@ -138,7 +150,9 @@ jobs:
 
           All four platform builds run native controller tests and packaged scaffold-generation acceptance. General CI validates generated Azure OpenTofu configuration. Live VM/cloud deployment, customer GitHub/GHES flows, physical disconnection and clean-host recovery remain acceptance tests. This is an evaluation preview, not production qualification.
 
-          Known limitations for testing: install Multipass before Local infrastructure planning because the new flow does not yet expose its installation controls. Restart the app before switching from infrastructure setup to a Core preview flow. Desktop backup exports configuration/records but omits sensitive Terraform state; retain the private controller directory and keys separately and do not treat this export as complete disaster recovery. Models and agents are a later milestone.
+          This release uses native OS certificate trust for HTTPS downloads and GitHub access, with real packaged HTTPS checks on all four platforms. Local infrastructure now exposes VM support checks and installation controls. Switching to the Core preview resets the flow correctly.
+
+          Known limitations for testing: Desktop backup exports configuration/records but omits sensitive Terraform state; retain the private controller directory and keys separately and do not treat this export as complete disaster recovery. Models and agents are a later milestone.
 
           Existing Core recipe 0.2.0/0.3.0 flows remain available and use the unchanged admitted Core 0.1.0.dev3. Azure requires a subscription and an existing privately routed subnet; charges apply until resources are removed. Windows requires Windows 11 Pro/Enterprise/Education x64 with Hyper-V; Windows Home and ARM Windows are unsupported.
 

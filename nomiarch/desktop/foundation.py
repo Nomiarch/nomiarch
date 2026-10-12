@@ -31,6 +31,9 @@ class FoundationScreens:
             getattr(self, name).trace_add('write', lambda *_: self.github_token.set(''))
 
     def customer(self, target):
+        self.flow = 'core'
+        self.paths = None
+        self.resume_after_files = False
         self.target, self.project_path = target, None
         self.isolation.set('local-isolated' if target == 'local' else 'cloud-restricted')
         self.clear('Who is this system for?', 'Your choices create a configuration folder you own. Future changes can be reviewed against this starting point.', '01  Your environment')

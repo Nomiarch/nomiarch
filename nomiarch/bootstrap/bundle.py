@@ -10,6 +10,7 @@ import shutil
 import tarfile
 import tempfile
 import urllib.request
+from nomiarch.tls import default_context
 import zipapp
 
 from nomiarch import __version__
@@ -160,7 +161,7 @@ def prepare(repo, output, signing_key, architecture, model, model_sha256,
         stage.mkdir()
         for name, artifact in components["architectures"][architecture].items():
             print("Fetching admitted component: " + name, flush=True)
-            with urllib.request.urlopen(artifact["url"], timeout=60) as src, (stage / name).open("wb") as dst:
+            with urllib.request.urlopen(artifact["url"], timeout=60, context=default_context()) as src, (stage / name).open("wb") as dst:
                 shutil.copyfileobj(src, dst)
             if digest(stage / name) != artifact["sha256"]:
                 raise NomiarchError("Upstream artifact checksum mismatch: " + name)
